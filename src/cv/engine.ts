@@ -102,7 +102,7 @@ export class PoseEngine {
     //    app (public/models) so no internet is needed at runtime.
     const detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
       modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
-      modelUrl: '/models/movenet-multipose/model.json',
+      modelUrl: `${import.meta.env.BASE_URL}models/movenet-multipose/model.json`,
       enableTracking: true,
       trackerType: poseDetection.TrackerType.BoundingBox,
       enableSmoothing: true,

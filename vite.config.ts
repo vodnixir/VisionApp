@@ -6,6 +6,8 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
+  // GitHub Pages serves the site from /VisionApp/; Capacitor and local dev use /.
+  base: process.env.GHPAGES ? '/VisionApp/' : '/',
   plugins: [
     react(),
     tailwindcss(),
