@@ -16,7 +16,14 @@ import {
   selectFighters,
   type BBox,
 } from './tracking'
-import { drawBrackets, drawLabel, drawMatchHud, drawVictorySplash, type HudState } from './draw'
+import {
+  drawBrackets,
+  drawComboTag,
+  drawLabel,
+  drawMatchHud,
+  drawVictorySplash,
+  type HudState,
+} from './draw'
 
 export interface EngineConfig {
   mirror: boolean
@@ -500,6 +507,9 @@ export class PoseEngine {
         : Math.max(0.3, 1 - ((nowMs - tracker.lastSeenAtMs) / PERSISTENCE_MS) * 0.7)
       drawBrackets(ctx, bbox, PLAYER_COLORS[i], { alpha, speed: tracker.speed })
       drawLabel(ctx, config.names[i], bbox, PLAYER_COLORS[i], alpha, vw)
+      if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
+        drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
+      }
     })
 
     if (config.hud.mode === 'match') drawMatchHud(ctx, vw, vh, config.hud, config.names)

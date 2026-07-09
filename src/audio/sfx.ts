@@ -62,6 +62,13 @@ class SoundFX {
     this.tone({ freq: 780, type: 'triangle', duration: 0.18, gain: 0.16, delay: 0.1 })
   }
 
+  /** Combo tier reached: quick rising blip, pitched higher for bigger tiers. */
+  comboUp(mult: number): void {
+    const base = mult >= 2 ? 880 : mult >= 1.5 ? 740 : 620
+    this.tone({ freq: base, type: 'triangle', duration: 0.08, gain: 0.14 })
+    this.tone({ freq: base * 1.5, type: 'triangle', duration: 0.14, gain: 0.14, delay: 0.07 })
+  }
+
   /** Rising victory fanfare arpeggio. */
   victory(): void {
     const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5] // C5 E5 G5 C6 E6

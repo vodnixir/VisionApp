@@ -68,6 +68,8 @@ export interface GameSettings {
   targetScore: number
   /** Random "freeze!" windows during the round: moving DRAINS your bar. */
   freezeMode: boolean
+  /** Streak multipliers (up to ×2) for CONTINUOUS movement. */
+  comboMode: boolean
   /** Flip the canvas horizontally (natural for players watching themselves on a TV). */
   mirrorMode: boolean
   soundEnabled: boolean
@@ -82,12 +84,33 @@ export const DEFAULT_SETTINGS: GameSettings = {
   handicap: [0, 0],
   targetScore: 100,
   freezeMode: false,
+  comboMode: true,
   mirrorMode: true,
   soundEnabled: true,
 }
 
 /** One "freeze!" window lasts this long. */
 export const FREEZE_WINDOW_MS = 3000
+
+/* ---------------- Combo (reward for CONTINUOUS movement) ---------------- */
+
+/** Smoothed activity (0..1) that counts as "still moving" for the streak. */
+export const COMBO_SPEED_MIN = 0.45
+/** Dips below the threshold shorter than this don't break the streak. */
+export const COMBO_GRACE_MS = 600
+/** Streak tiers: keep moving this long → fill-rate multiplier. */
+export const COMBO_TIERS = [
+  { atMs: 3_000, mult: 1.25 },
+  { atMs: 6_000, mult: 1.5 },
+  { atMs: 10_000, mult: 2 },
+] as const
+
+/** Fill multiplier for an unbroken movement streak of the given length. */
+export function comboMultiplier(streakMs: number): number {
+  let mult = 1
+  for (const tier of COMBO_TIERS) if (streakMs >= tier.atMs) mult = tier.mult
+  return mult
+}
 
 /* ---------------- Belts (rank derived from wins) ---------------- */
 
@@ -148,6 +171,8 @@ export interface PlayerResult {
   progress: number
   maxSpeed: number
   avgSpeed: number
+  /** Highest combo multiplier reached (1 = never comboed / mode off). */
+  maxCombo: number
 }
 
 export interface MatchResults {

@@ -1,4 +1,4 @@
-import { Gauge, Home, RotateCcw, Share2, Trophy, Users, Zap } from 'lucide-react'
+import { Flame, Gauge, Home, RotateCcw, Share2, Trophy, Users, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 import { shareClip, type MatchClip } from '../recorder'
@@ -89,6 +89,13 @@ export function GameOverScreen({
               label={t('over.avg')}
               value={`${Math.round(p.avgSpeed * 100)}%`}
             />
+            {(p.maxCombo ?? 1) > 1 && (
+              <StatRow
+                icon={<Flame className="size-3.5" aria-hidden />}
+                label={t('over.combo')}
+                value={`×${p.maxCombo}`}
+              />
+            )}
           </div>
         ))}
       </div>

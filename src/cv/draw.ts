@@ -10,6 +10,8 @@ export interface HudState {
   remainingMs: number
   /** A "freeze!" window is active — moving drains the bar. */
   frozen: boolean
+  /** Current combo fill multiplier per player (1 = no streak / mode off). */
+  combo: [number, number]
   winnerIndex: 0 | 1 | null
   winnerName: string
   endedByTimer: boolean
@@ -20,6 +22,7 @@ export const DEFAULT_HUD: HudState = {
   progress: [0, 0],
   remainingMs: 0,
   frozen: false,
+  combo: [1, 1],
   winnerIndex: null,
   winnerName: '',
   endedByTimer: false,
@@ -92,6 +95,32 @@ export function drawLabel(
   ctx.shadowBlur = 14
   ctx.fillStyle = color
   ctx.fillText(text.toUpperCase(), cx, cy)
+  ctx.restore()
+}
+
+/**
+ * Combo badge at the top-right corner of a fighter's bracket: "×1.5" / "×2".
+ * Neon-yellow, hotter and pulsing at the maximum tier — made for the TV/clip.
+ */
+export function drawComboTag(
+  ctx: CanvasRenderingContext2D,
+  bbox: BBox,
+  mult: number,
+  alpha: number,
+): void {
+  const maxTier = mult >= 2
+  const size = Math.round(Math.min(Math.max(bbox.w * (maxTier ? 0.17 : 0.13), 20), 52))
+  const pulse = maxTier ? 0.75 + 0.25 * Math.abs(Math.sin(performance.now() / 160)) : 1
+  ctx.save()
+  ctx.globalAlpha = alpha * pulse
+  ctx.font = `900 ${size}px ${FONT}`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'bottom'
+  ctx.fillStyle = maxTier ? '#ffffff' : '#ffe600'
+  ctx.shadowColor = '#ffe600'
+  ctx.shadowBlur = maxTier ? 26 : 14
+  // Trailing zeros stripped: 1.25 → "×1.25", 1.5 → "×1.5", 2 → "×2".
+  ctx.fillText(`×${mult}`, bbox.x + bbox.w + size * 0.2, bbox.y + size * 0.9)
   ctx.restore()
 }
 

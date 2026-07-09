@@ -22,9 +22,12 @@ import {
 } from './storage'
 import {
   ARENA_PHASES,
+  COMBO_GRACE_MS,
+  COMBO_SPEED_MIN,
   FILL_RATE,
   FREEZE_WINDOW_MS,
   ROUND_DURATION_MS,
+  comboMultiplier,
   type GameSettings,
   type MatchResults,
 } from './types'
@@ -53,6 +56,13 @@ interface Accumulators {
   /** "Freeze!" windows as ms offsets from match start (empty = mode off). */
   freezes: FreezeWindow[]
   frozen: boolean
+  /** Unbroken movement streak per player, ms. */
+  comboMs: [number, number]
+  /** How long the player has been below the combo threshold (grace timer). */
+  comboDipMs: [number, number]
+  /** Current fill multiplier per player (1 = no streak). */
+  comboMult: [number, number]
+  maxCombo: [number, number]
 }
 
 function createAccumulators(handicap: [number, number] = [0, 0]): Accumulators {
@@ -65,6 +75,10 @@ function createAccumulators(handicap: [number, number] = [0, 0]): Accumulators {
     finished: false,
     freezes: [],
     frozen: false,
+    comboMs: [0, 0],
+    comboDipMs: [0, 0],
+    comboMult: [1, 1],
+    maxCombo: [1, 1],
   }
 }
 
@@ -145,6 +159,7 @@ export default function App() {
         progress: a.progress[i],
         maxSpeed: a.maxSpeed[i],
         avgSpeed: a.time > 0 ? a.speedIntegral[i] / a.time : 0,
+        maxCombo: a.maxCombo[i],
       })) as unknown as MatchResults['players'],
     }
     sfx.victory()
@@ -165,6 +180,7 @@ export default function App() {
         progress: [a.progress[0], a.progress[1]],
         remainingMs: 0,
         frozen: false,
+        combo: [1, 1],
         winnerIndex,
         winnerName: names[winnerIndex],
         endedByTimer,
@@ -223,10 +239,34 @@ export default function App() {
       a.time += frame.dt
       for (const i of [0, 1] as const) {
         const speed = frame.players[i].speed
+
+        // Combo streak: continuous movement compounds the fill rate (up to ×2).
+        // A freeze window HOLDS the streak while you stand still — flinching
+        // burns it along with your bar.
+        if (g.settings.comboMode) {
+          if (frozen) {
+            if (speed >= COMBO_SPEED_MIN) {
+              a.comboMs[i] = 0
+              a.comboDipMs[i] = 0
+            }
+          } else if (speed >= COMBO_SPEED_MIN) {
+            a.comboMs[i] += frame.dt * 1000
+            a.comboDipMs[i] = 0
+          } else {
+            a.comboDipMs[i] += frame.dt * 1000
+            if (a.comboDipMs[i] > COMBO_GRACE_MS) a.comboMs[i] = 0
+          }
+          const mult = comboMultiplier(a.comboMs[i])
+          if (mult > a.comboMult[i]) sfx.comboUp(mult)
+          a.comboMult[i] = mult
+          if (mult > a.maxCombo[i]) a.maxCombo[i] = mult
+        }
+
+        // The freeze penalty is never combo-amplified — only the gain is.
         const delta = speed * rate * frame.dt
         a.progress[i] = frozen
           ? Math.max(a.progress[i] - delta, 0)
-          : Math.min(a.progress[i] + delta, target)
+          : Math.min(a.progress[i] + delta * a.comboMult[i], target)
         if (speed > a.maxSpeed[i]) a.maxSpeed[i] = speed
         a.speedIntegral[i] += speed * frame.dt
       }
@@ -238,6 +278,7 @@ export default function App() {
           progress: [toPercent(a.progress[0]), toPercent(a.progress[1])],
           remainingMs: Math.max(0, remaining),
           frozen,
+          combo: [a.comboMult[0], a.comboMult[1]],
           winnerIndex: null,
           winnerName: '',
           endedByTimer: false,
@@ -354,6 +395,7 @@ export default function App() {
           progress: [0, 0],
           remainingMs: 0,
           frozen: false,
+          combo: [1, 1],
           winnerIndex: null,
           winnerName: '',
           endedByTimer: false,

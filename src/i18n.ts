@@ -60,6 +60,7 @@ const en = {
   'hud.timeUp': 'TIME!',
   'hud.freeze': 'FREEZE!',
   'setup.freeze': 'Freeze!',
+  'setup.combo': 'Combo',
 
   'over.winner': 'Winner',
   'over.byTimer': 'Time is up — higher score wins',
@@ -67,6 +68,7 @@ const en = {
   'over.score': 'Score',
   'over.peak': 'Peak speed',
   'over.avg': 'Avg activity',
+  'over.combo': 'Best combo',
   'over.next': 'Next match',
   'over.change': 'Change players',
   'over.home': 'Home',
@@ -157,6 +159,7 @@ const ru: Dict = {
   'hud.timeUp': 'ВРЕМЯ!',
   'hud.freeze': 'ЗАМРИ!',
   'setup.freeze': 'Замри!',
+  'setup.combo': 'Комбо',
 
   'over.winner': 'Победитель',
   'over.byTimer': 'Время вышло — побеждает счёт',
@@ -164,6 +167,7 @@ const ru: Dict = {
   'over.score': 'Счёт',
   'over.peak': 'Пиковая скорость',
   'over.avg': 'Средняя активность',
+  'over.combo': 'Лучшее комбо',
   'over.next': 'Следующий матч',
   'over.change': 'Сменить игроков',
   'over.home': 'Домой',
@@ -250,6 +254,7 @@ const es: Dict = {
   'hud.timeUp': '¡TIEMPO!',
   'hud.freeze': '¡QUIETO!',
   'setup.freeze': '¡Quieto!',
+  'setup.combo': 'Combo',
 
   'over.winner': 'Ganador',
   'over.byTimer': 'Se acabó el tiempo — gana la puntuación',
@@ -257,6 +262,7 @@ const es: Dict = {
   'over.score': 'Puntuación',
   'over.peak': 'Velocidad máx.',
   'over.avg': 'Actividad media',
+  'over.combo': 'Mejor combo',
   'over.next': 'Siguiente partida',
   'over.change': 'Cambiar jugadores',
   'over.home': 'Inicio',
@@ -343,6 +349,7 @@ const pt: Dict = {
   'hud.timeUp': 'TEMPO!',
   'hud.freeze': 'ESTÁTUA!',
   'setup.freeze': 'Estátua!',
+  'setup.combo': 'Combo',
 
   'over.winner': 'Vencedor',
   'over.byTimer': 'Tempo esgotado — vence a pontuação',
@@ -350,6 +357,7 @@ const pt: Dict = {
   'over.score': 'Pontuação',
   'over.peak': 'Velocidade máx.',
   'over.avg': 'Atividade média',
+  'over.combo': 'Melhor combo',
   'over.next': 'Próxima partida',
   'over.change': 'Trocar jogadores',
   'over.home': 'Início',

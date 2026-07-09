@@ -1,4 +1,4 @@
-import { ArrowLeft, FlipHorizontal2, Snowflake, Volume2, VolumeX, Zap } from 'lucide-react'
+import { ArrowLeft, Flame, FlipHorizontal2, Snowflake, Volume2, VolumeX, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 import { loadProfiles } from '../storage'
@@ -84,7 +84,15 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
           </div>
         </div>
 
-        <div className="flex gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Toggle
+            active={settings.comboMode}
+            onClick={() => onPatch({ comboMode: !settings.comboMode })}
+            icon={<Flame className="size-4" aria-hidden />}
+            label={t('setup.combo')}
+            onLabel={t('common.on')}
+            offLabel={t('common.off')}
+          />
           <Toggle
             active={settings.freezeMode}
             onClick={() => onPatch({ freezeMode: !settings.freezeMode })}

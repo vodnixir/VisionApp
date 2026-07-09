@@ -5,6 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { PORTRAIT_H, PORTRAIT_W, coverCrop, portraitLayout } from '../src/recorder'
+import { COMBO_TIERS, comboMultiplier } from '../src/types'
 import {
   REBIND_WINDOW_MS,
   computeRoi,
@@ -215,6 +216,23 @@ ok('portraitLayout of an already-portrait source fills the frame', () => {
   assert.equal(l.h, PORTRAIT_H)
   assert.equal(l.x, 0)
   assert.equal(l.y, 0)
+})
+
+console.log('combo multiplier')
+
+ok('tiers kick in at their thresholds and never regress', () => {
+  assert.equal(comboMultiplier(0), 1)
+  assert.equal(comboMultiplier(2_999), 1)
+  assert.equal(comboMultiplier(3_000), 1.25)
+  assert.equal(comboMultiplier(6_000), 1.5)
+  assert.equal(comboMultiplier(10_000), 2)
+  assert.equal(comboMultiplier(120_000), 2, 'caps at the top tier')
+  // Monotonic: a longer streak never yields a smaller multiplier.
+  let prev = 0
+  for (const tier of COMBO_TIERS) {
+    assert.ok(tier.mult > prev)
+    prev = tier.mult
+  }
 })
 
 console.log(`\n${passed} checks passed`)
