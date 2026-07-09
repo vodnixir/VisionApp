@@ -6,10 +6,21 @@
 class SoundFX {
   enabled = true
   private ctx: AudioContext | null = null
+  private streamDest: MediaStreamAudioDestinationNode | null = null
 
   unlock(): void {
     if (!this.ctx) this.ctx = new AudioContext()
     if (this.ctx.state === 'suspended') void this.ctx.resume()
+  }
+
+  /**
+   * Audio stream mirroring everything the players hear — mixed into the match
+   * clip so the gong and the victory fanfare survive into TikTok.
+   */
+  captureStream(): MediaStream | null {
+    if (!this.ctx) return null
+    this.streamDest ??= this.ctx.createMediaStreamDestination()
+    return this.streamDest.stream
   }
 
   /** Short blip when the system locks onto both fighters. */
@@ -37,6 +48,18 @@ class SoundFX {
     }
     // metallic attack transient
     this.tone({ freq: 1244, type: 'triangle', duration: 0.1, gain: 0.12 })
+  }
+
+  /** Referee whistle: a freeze window opens — nobody move! */
+  whistle(): void {
+    this.tone({ freq: 2350, type: 'square', duration: 0.16, gain: 0.16, glideTo: 2200 })
+    this.tone({ freq: 2350, type: 'square', duration: 0.3, gain: 0.16, delay: 0.2, glideTo: 2100 })
+  }
+
+  /** Freeze window over — move again! */
+  release(): void {
+    this.tone({ freq: 520, type: 'triangle', duration: 0.12, gain: 0.16 })
+    this.tone({ freq: 780, type: 'triangle', duration: 0.18, gain: 0.16, delay: 0.1 })
   }
 
   /** Rising victory fanfare arpeggio. */
@@ -77,6 +100,7 @@ class SoundFX {
 
     osc.connect(env)
     env.connect(ctx.destination)
+    if (this.streamDest) env.connect(this.streamDest)
     osc.start(t0)
     osc.stop(t0 + duration + 0.05)
     osc.onended = () => {

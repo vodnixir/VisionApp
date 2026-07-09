@@ -1,4 +1,6 @@
-import { ScanLine, Users } from 'lucide-react'
+import { Lightbulb, MoveHorizontal, ScanLine, UserPlus, Users } from 'lucide-react'
+import type { EngineHints } from '../cv/engine'
+import { useI18n } from '../i18n'
 import type { CalibrationPhase } from '../types'
 
 interface Props {
@@ -7,15 +9,18 @@ interface Props {
   /** 0..1 progress of the 3-second lock. */
   lockProgress: number
   countdown: number | null
+  hints: EngineHints
 }
 
-export function CalibrationOverlay({ phase, presentCount, lockProgress, countdown }: Props) {
+export function CalibrationOverlay({ phase, presentCount, lockProgress, countdown, hints }: Props) {
+  const { t } = useI18n()
+
   if (phase === 'COUNTDOWN') {
     return (
       <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
         <span
           key={countdown}
-          className="neon-text-yellow animate-countdown-pop text-[9rem] font-black leading-none sm:text-[16rem]"
+          className="neon-text-yellow animate-countdown-pop font-display text-[9rem] font-black leading-none sm:text-[16rem]"
         >
           {countdown}
         </span>
@@ -34,11 +39,11 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
             <Users className="animate-pulse-glow size-6 text-neon-yellow sm:size-8" aria-hidden />
           )}
           <span
-            className={`text-sm font-black tracking-[0.2em] sm:text-xl ${
+            className={`text-sm font-black tracking-[0.15em] sm:text-xl ${
               locking ? 'neon-text-white' : 'neon-text-yellow'
             }`}
           >
-            {locking ? 'FIGHTERS LOCKED — HOLD ON' : 'SEARCHING FOR FIGHTERS'}
+            {(locking ? t('cal.locking') : t('cal.searching')).toUpperCase()}
           </span>
         </div>
 
@@ -46,9 +51,7 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
           <span className={presentCount >= 1 ? 'neon-text-blue font-bold' : 'text-slate-600'}>P1</span>
           <span className="text-slate-500">·</span>
           <span className={presentCount >= 2 ? 'neon-text-red font-bold' : 'text-slate-600'}>P2</span>
-          <span className="ml-2 text-slate-400">
-            {presentCount} / 2 IN FRAME
-          </span>
+          <span className="ml-2 text-slate-400">{t('cal.inFrame', { n: presentCount })}</span>
         </div>
 
         {locking && (
@@ -59,7 +62,28 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
             />
           </div>
         )}
+
+        <QualityHint hints={hints} />
       </div>
     </div>
+  )
+}
+
+/** One live setup hint at a time, most actionable first. */
+function QualityHint({ hints }: { hints: EngineHints }) {
+  const { t } = useI18n()
+  const hint = hints.tooFar
+    ? ({ icon: <UserPlus className="size-4" aria-hidden />, text: t('cal.closer') } as const)
+    : hints.overlap
+      ? ({ icon: <MoveHorizontal className="size-4" aria-hidden />, text: t('cal.apart') } as const)
+      : hints.dark
+        ? ({ icon: <Lightbulb className="size-4" aria-hidden />, text: t('cal.light') } as const)
+        : null
+  if (!hint) return null
+  return (
+    <p className="flex items-center gap-2 text-xs font-semibold tracking-wide text-neon-yellow">
+      {hint.icon}
+      {hint.text}
+    </p>
   )
 }

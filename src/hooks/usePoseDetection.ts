@@ -1,7 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PoseEngine, type EngineConfig, type EngineFrame } from '../cv/engine'
+import { DEFAULT_HUD } from '../cv/draw'
+// Type-only imports keep the heavy TFJS chunk OUT of the menu bundle — the
+// engine module is loaded on demand inside start() (and idle-prefetched).
+import type { EngineConfig, EngineFrame, PoseEngine } from '../cv/engine'
 
 export type EngineStatus = 'idle' | 'starting' | 'running' | 'error'
+
+/** Fire-and-forget warm-up of the engine chunk while the user reads the menu. */
+export function prefetchEngine(): void {
+  const idle =
+    typeof requestIdleCallback === 'function'
+      ? (cb: () => void) => requestIdleCallback(cb, { timeout: 3000 })
+      : (cb: () => void) => setTimeout(cb, 1500)
+  idle(() => {
+    void import('../cv/engine')
+  })
+}
 
 /**
  * React lifecycle wrapper around PoseEngine.
@@ -21,6 +35,8 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     names: ['PLAYER 1', 'PLAYER 2'],
     scoring: false,
     drawOverlays: true,
+    rolesLocked: false,
+    hud: { ...DEFAULT_HUD },
   })
   const onFrameRef = useRef(onFrame)
   onFrameRef.current = onFrame
@@ -34,15 +50,34 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     const canvas = canvasRef.current
     if (!video || !canvas) return
 
-    const engine = new PoseEngine(
+    setStatus('starting')
+    setError(null)
+
+    let EngineClass: typeof PoseEngine
+    try {
+      EngineClass = (await import('../cv/engine')).PoseEngine
+    } catch {
+      setStatus('error')
+      setError('Could not load the vision engine. Check the connection and retry.')
+      return
+    }
+
+    const engine = new EngineClass(
       video,
       canvas,
       () => configRef.current,
       (frame) => onFrameRef.current(frame),
+      // Mid-game fatalities (camera unplugged, GPU pipeline dead) surface as
+      // the regular error overlay instead of a silent freeze.
+      (message) => {
+        if (engineRef.current !== engine) return
+        engine.destroy()
+        engineRef.current = null
+        setStatus('error')
+        setError(message)
+      },
     )
     engineRef.current = engine
-    setStatus('starting')
-    setError(null)
     try {
       await engine.start()
       if (engineRef.current !== engine) return // destroyed while booting

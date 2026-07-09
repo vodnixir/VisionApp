@@ -28,7 +28,9 @@ body,
   margin: 0;
   background: var(--color-arena-950);
   color: #fff;
-  font-family: var(--font-display);
+  /* System font for body copy (full Cyrillic support); Orbitron is latin-only
+     and reserved for the logo, timers and canvas HUD via `font-display`. */
+  font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }

@@ -1,4 +1,32 @@
+import { t } from '../i18n'
+import { PLAYER_COLORS } from '../types'
 import type { BBox } from './tracking'
+
+/** Everything the canvas HUD needs, updated per inference frame via engine config. */
+export interface HudState {
+  mode: 'none' | 'match' | 'victory'
+  /** 0..100 — percent of target score per player. */
+  progress: [number, number]
+  remainingMs: number
+  /** A "freeze!" window is active — moving drains the bar. */
+  frozen: boolean
+  winnerIndex: 0 | 1 | null
+  winnerName: string
+  endedByTimer: boolean
+}
+
+export const DEFAULT_HUD: HudState = {
+  mode: 'none',
+  progress: [0, 0],
+  remainingMs: 0,
+  frozen: false,
+  winnerIndex: null,
+  winnerName: '',
+  endedByTimer: false,
+}
+
+const FONT = "Orbitron, 'Segoe UI', system-ui, sans-serif"
+const PANEL_BG = 'rgba(5, 8, 18, 0.66)'
 
 /**
  * Neon corner brackets [ ] around a fighter. Glow intensity scales with speed,
@@ -55,7 +83,7 @@ export function drawLabel(
   const size = Math.round(Math.min(Math.max(bbox.w * 0.11, 18), 44))
   ctx.save()
   ctx.globalAlpha = alpha
-  ctx.font = `700 ${size}px Orbitron, sans-serif`
+  ctx.font = `700 ${size}px ${FONT}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'bottom'
   const cx = Math.min(Math.max(bbox.x + bbox.w / 2, size * 2), canvasWidth - size * 2)
@@ -64,5 +92,218 @@ export function drawLabel(
   ctx.shadowBlur = 14
   ctx.fillStyle = color
   ctx.fillText(text.toUpperCase(), cx, cy)
+  ctx.restore()
+}
+
+function roundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const radius = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
+}
+
+function formatClock(ms: number): string {
+  const totalSec = Math.max(0, Math.ceil(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/**
+ * Match HUD drawn ON the canvas (not DOM) so it is part of the TV picture and
+ * of the recorded highlight clip: two progress bars, names, center timer.
+ */
+export function drawMatchHud(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  hud: HudState,
+  names: [string, string],
+): void {
+  const pad = Math.round(w * 0.015)
+  const centerW = Math.max(92, Math.round(w * 0.115))
+  const panelH = Math.max(58, Math.round(h * 0.145))
+  const panelW = Math.round((w - centerW - pad * 4) / 2)
+
+  drawPlayerPanel(ctx, pad, pad, panelW, panelH, names[0], hud.progress[0], 0)
+  drawPlayerPanel(ctx, w - pad - panelW, pad, panelW, panelH, names[1], hud.progress[1], 1)
+
+  // Center timer chip.
+  const timerH = Math.round(panelH * 0.78)
+  const tx = Math.round((w - centerW) / 2)
+  ctx.save()
+  ctx.fillStyle = PANEL_BG
+  roundedRect(ctx, tx, pad, centerW, timerH, 10)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  const urgent = hud.remainingMs <= 5_500
+  const size = Math.round(timerH * 0.5)
+  ctx.font = `900 ${size}px ${FONT}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  if (urgent) {
+    // Pulse the last five seconds — readable urgency without extra state.
+    const pulse = 0.72 + 0.28 * Math.abs(Math.sin(performance.now() / 180))
+    ctx.globalAlpha = pulse
+    ctx.fillStyle = '#ffe600'
+    ctx.shadowColor = '#ffe600'
+    ctx.shadowBlur = 16
+  } else {
+    ctx.fillStyle = '#ffffff'
+  }
+  ctx.fillText(formatClock(hud.remainingMs), tx + centerW / 2, pad + timerH / 2 + 1)
+  ctx.restore()
+
+  if (hud.frozen) drawFreezeBanner(ctx, w, h)
+}
+
+/** Icy overlay + pulsing "FREEZE!" — anyone moving now is draining their bar. */
+function drawFreezeBanner(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.save()
+  ctx.fillStyle = 'rgba(0, 195, 255, 0.10)'
+  ctx.fillRect(0, 0, w, h)
+
+  const pulse = 0.8 + 0.2 * Math.abs(Math.sin(performance.now() / 150))
+  const size = Math.round(h * 0.13)
+  ctx.font = `900 ${size}px ${FONT}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.globalAlpha = pulse
+  ctx.fillStyle = '#aef1ff'
+  ctx.shadowColor = '#00c3ff'
+  ctx.shadowBlur = 30
+  ctx.fillText(t('hud.freeze'), w / 2, h * 0.5)
+  ctx.restore()
+}
+
+function drawPlayerPanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  name: string,
+  progressPercent: number,
+  playerIndex: 0 | 1,
+): void {
+  const color = PLAYER_COLORS[playerIndex]
+  const isLeft = playerIndex === 0
+  const percent = Math.min(Math.max(progressPercent, 0), 100)
+
+  ctx.save()
+  ctx.fillStyle = PANEL_BG
+  roundedRect(ctx, x, y, w, h, 12)
+  ctx.fill()
+  ctx.strokeStyle = color
+  ctx.lineWidth = 2
+  ctx.globalAlpha = 0.95
+  ctx.stroke()
+  ctx.globalAlpha = 1
+
+  const inset = Math.round(h * 0.16)
+  const nameSize = Math.round(h * 0.3)
+  const pctSize = Math.round(h * 0.36)
+
+  // Name (truncate to fit half of the panel).
+  ctx.font = `700 ${nameSize}px ${FONT}`
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = color
+  const maxNameW = w * 0.58
+  let label = name.toUpperCase()
+  while (label.length > 2 && ctx.measureText(label).width > maxNameW) {
+    label = label.slice(0, -1)
+  }
+  ctx.textAlign = isLeft ? 'left' : 'right'
+  ctx.fillText(label, isLeft ? x + inset : x + w - inset, y + inset)
+
+  // Percent.
+  ctx.font = `900 ${pctSize}px ${FONT}`
+  ctx.fillStyle = '#ffffff'
+  ctx.textAlign = isLeft ? 'right' : 'left'
+  ctx.fillText(`${Math.floor(percent)}%`, isLeft ? x + w - inset : x + inset, y + inset - 2)
+
+  // Progress bar (P2's fills right-to-left for on-TV symmetry).
+  const barH = Math.round(h * 0.22)
+  const barY = y + h - inset - barH
+  const barW = w - inset * 2
+  ctx.fillStyle = 'rgba(255,255,255,0.13)'
+  roundedRect(ctx, x + inset, barY, barW, barH, barH / 2)
+  ctx.fill()
+  const fillW = Math.max((barW * percent) / 100, barH)
+  if (percent > 0.5) {
+    ctx.fillStyle = color
+    ctx.shadowColor = color
+    ctx.shadowBlur = 12
+    roundedRect(ctx, isLeft ? x + inset : x + inset + barW - fillW, barY, fillW, barH, barH / 2)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
+/**
+ * Victory splash drawn on the canvas so the recorded clip ends with the
+ * celebration (the DOM controls appear for the host a moment later).
+ */
+export function drawVictorySplash(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  hud: HudState,
+): void {
+  if (hud.winnerIndex === null) return
+  const color = PLAYER_COLORS[hud.winnerIndex]
+
+  ctx.save()
+  ctx.fillStyle = 'rgba(3, 4, 10, 0.55)'
+  ctx.fillRect(0, 0, w, h)
+
+  ctx.textAlign = 'center'
+
+  if (hud.endedByTimer) {
+    const chipSize = Math.round(h * 0.045)
+    ctx.font = `700 ${chipSize}px ${FONT}`
+    ctx.fillStyle = '#ffe600'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText(t('hud.timeUp'), w / 2, h * 0.3)
+  }
+
+  const labelSize = Math.round(h * 0.05)
+  ctx.font = `700 ${labelSize}px ${FONT}`
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'
+  ctx.textBaseline = 'bottom'
+  ctx.fillText(t('hud.winner'), w / 2, h * 0.42)
+
+  const nameSize = Math.round(h * 0.14)
+  ctx.font = `900 ${nameSize}px ${FONT}`
+  ctx.fillStyle = color
+  ctx.shadowColor = color
+  ctx.shadowBlur = 28
+  ctx.textBaseline = 'middle'
+  ctx.fillText(hud.winnerName.toUpperCase(), w / 2, h * 0.53)
+  ctx.shadowBlur = 0
+
+  const scoreSize = Math.round(h * 0.055)
+  ctx.font = `700 ${scoreSize}px ${FONT}`
+  ctx.fillStyle = 'rgba(255,255,255,0.9)'
+  ctx.textBaseline = 'top'
+  ctx.fillText(
+    `${Math.floor(hud.progress[0])}%  —  ${Math.floor(hud.progress[1])}%`,
+    w / 2,
+    h * 0.64,
+  )
   ctx.restore()
 }
