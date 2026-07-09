@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { PORTRAIT_H, PORTRAIT_W, coverCrop, portraitLayout } from '../src/recorder'
-import { COMBO_TIERS, comboMultiplier } from '../src/types'
+import { COMBO_TIERS, comboMultiplier, mirrorDefaultForLabel } from '../src/types'
 import {
   REBIND_WINDOW_MS,
   computeRoi,
@@ -233,6 +233,19 @@ ok('tiers kick in at their thresholds and never regress', () => {
     assert.ok(tier.mult > prev)
     prev = tier.mult
   }
+})
+
+console.log('camera mirror default')
+
+ok('front/unknown cameras mirror, rear/external ones do not', () => {
+  assert.equal(mirrorDefaultForLabel('Front Camera'), true)
+  assert.equal(mirrorDefaultForLabel(''), true, 'unlabeled (pre-permission) → mirror')
+  assert.equal(mirrorDefaultForLabel('camera2 0, facing back'), false)
+  assert.equal(mirrorDefaultForLabel('Rear Camera'), false)
+  assert.equal(mirrorDefaultForLabel('Câmera traseira'), false)
+  assert.equal(mirrorDefaultForLabel('Задняя камера'), false)
+  assert.equal(mirrorDefaultForLabel('USB-камера (тыл)'), false)
+  assert.equal(mirrorDefaultForLabel('Logitech HD Webcam C270'), true)
 })
 
 console.log(`\n${passed} checks passed`)

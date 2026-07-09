@@ -159,18 +159,33 @@ export class PoseEngine {
   }
 
   /** Full boot: camera -> GPU backend -> MoveNet -> loops. Safe to abort via destroy(). */
-  async start(): Promise<void> {
+  async start(cameraId?: string | null): Promise<void> {
     if (this.running || this.destroyed) return
 
-    // 1. Camera
+    // 1. Camera. A remembered deviceId may be stale (USB cam unplugged,
+    //    permissions re-scoped) — fall back to the default front camera.
+    const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false,
-      })
+      stream = cameraId
+        ? await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: cameraId }, ...size },
+            audio: false,
+          })
+        : await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', ...size },
+            audio: false,
+          })
     } catch (err) {
-      throw new Error(friendlyCameraError(err))
+      if (!cameraId) throw new Error(friendlyCameraError(err))
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', ...size },
+          audio: false,
+        })
+      } catch (err2) {
+        throw new Error(friendlyCameraError(err2))
+      }
     }
     if (this.destroyed) {
       stream.getTracks().forEach((t) => t.stop())

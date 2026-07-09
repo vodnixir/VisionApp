@@ -72,6 +72,8 @@ export interface GameSettings {
   comboMode: boolean
   /** Flip the canvas horizontally (natural for players watching themselves on a TV). */
   mirrorMode: boolean
+  /** Chosen camera deviceId; null = default front camera. */
+  cameraId: string | null
   soundEnabled: boolean
 }
 
@@ -86,7 +88,17 @@ export const DEFAULT_SETTINGS: GameSettings = {
   freezeMode: false,
   comboMode: true,
   mirrorMode: true,
+  cameraId: null,
   soundEnabled: true,
+}
+
+/**
+ * Sensible mirror default for a camera: a front camera behaves like a mirror
+ * (flip ON feels natural), a rear/external camera does not — flipping it makes
+ * every movement look reversed on the TV.
+ */
+export function mirrorDefaultForLabel(label: string): boolean {
+  return !/back|rear|environment|trase|world|задн|тыл/i.test(label)
 }
 
 /** One "freeze!" window lasts this long. */

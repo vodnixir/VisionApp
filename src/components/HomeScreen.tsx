@@ -1,6 +1,7 @@
-import { Swords, Trophy, Users, Zap } from 'lucide-react'
+import { Cast, Swords, Trophy, Users, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { LANGS, useI18n } from '../i18n'
+import type { CastStatus } from '../show'
 import { loadProfiles } from '../storage'
 
 interface Props {
@@ -8,12 +9,29 @@ interface Props {
   onTournament: () => void
   onRoster: () => void
   tournamentActive: boolean
+  castSupported: boolean
+  castStatus: CastStatus
+  onCast: () => void
 }
 
 /** Host console home: the phone is the remote, the show is on the TV. */
-export function HomeScreen({ onQuickMatch, onTournament, onRoster, tournamentActive }: Props) {
+export function HomeScreen({
+  onQuickMatch,
+  onTournament,
+  onRoster,
+  tournamentActive,
+  castSupported,
+  castStatus,
+  onCast,
+}: Props) {
   const { t, lang, setLang } = useI18n()
   const [profileCount] = useState(() => loadProfiles().length)
+  const castLabel =
+    castStatus === 'live'
+      ? t('cast.live')
+      : castStatus === 'connecting'
+        ? t('cast.connecting')
+        : t('cast.tv')
 
   return (
     <div className="arena-grid absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-arena-950 px-4 py-6">
@@ -90,6 +108,32 @@ export function HomeScreen({ onQuickMatch, onTournament, onRoster, tournamentAct
           </span>
           <span className="text-xs text-slate-500">{t('home.playersSaved', { n: profileCount })}</span>
         </button>
+
+        {castSupported && (
+          <button
+            type="button"
+            onClick={onCast}
+            className={`flex items-center justify-between rounded-2xl border px-5 py-4 text-left transition-colors ${
+              castStatus === 'live'
+                ? 'border-neon-green/60 hover:border-neon-green'
+                : 'border-white/10 hover:border-white/25'
+            } bg-white/5`}
+          >
+            <span className="flex items-center gap-3">
+              <Cast
+                className={`size-6 ${castStatus === 'live' ? 'text-neon-green' : 'text-slate-300'}`}
+                aria-hidden
+              />
+              <span className="flex flex-col">
+                <span className="text-base font-bold text-slate-200">{castLabel}</span>
+                <span className="text-xs text-slate-500">{t('cast.hint')}</span>
+              </span>
+            </span>
+            {castStatus === 'live' && (
+              <span className="size-2.5 rounded-full bg-neon-green shadow-[0_0_8px_rgba(57,255,136,0.8)]" />
+            )}
+          </button>
+        )}
 
         <p className="mt-auto pt-6 text-center text-xs text-slate-600">{t('home.footer')}</p>
       </div>

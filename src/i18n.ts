@@ -42,6 +42,8 @@ const en = {
   'setup.handicap': 'Head start',
   'setup.mirror': 'TV mirror',
   'setup.sound': 'Sound',
+  'setup.camera': 'Camera',
+  'setup.cameraN': 'Camera {n}',
   'setup.start': 'START',
   'setup.hint': 'Both players fully visible in frame. Left side is blue, right side is red.',
 
@@ -61,6 +63,12 @@ const en = {
   'hud.freeze': 'FREEZE!',
   'setup.freeze': 'Freeze!',
   'setup.combo': 'Combo',
+
+  'cast.tv': 'Show on TV',
+  'cast.connecting': 'Connecting…',
+  'cast.live': 'TV connected',
+  'cast.hint': 'Chromecast or a second window',
+  'show.waiting': 'Waiting for the match…',
 
   'over.winner': 'Winner',
   'over.byTimer': 'Time is up — higher score wins',
@@ -141,6 +149,8 @@ const ru: Dict = {
   'setup.handicap': 'Фора',
   'setup.mirror': 'ТВ-зеркало',
   'setup.sound': 'Звук',
+  'setup.camera': 'Камера',
+  'setup.cameraN': 'Камера {n}',
   'setup.start': 'СТАРТ',
   'setup.hint': 'Оба игрока полностью в кадре. Слева — синий, справа — красный.',
 
@@ -160,6 +170,12 @@ const ru: Dict = {
   'hud.freeze': 'ЗАМРИ!',
   'setup.freeze': 'Замри!',
   'setup.combo': 'Комбо',
+
+  'cast.tv': 'Показать на ТВ',
+  'cast.connecting': 'Подключение…',
+  'cast.live': 'ТВ подключён',
+  'cast.hint': 'Chromecast или второе окно',
+  'show.waiting': 'Ждём матч…',
 
   'over.winner': 'Победитель',
   'over.byTimer': 'Время вышло — побеждает счёт',
@@ -236,6 +252,8 @@ const es: Dict = {
   'setup.handicap': 'Ventaja',
   'setup.mirror': 'Espejo TV',
   'setup.sound': 'Sonido',
+  'setup.camera': 'Cámara',
+  'setup.cameraN': 'Cámara {n}',
   'setup.start': 'EMPEZAR',
   'setup.hint': 'Ambos jugadores visibles por completo. Izquierda azul, derecha roja.',
 
@@ -255,6 +273,12 @@ const es: Dict = {
   'hud.freeze': '¡QUIETO!',
   'setup.freeze': '¡Quieto!',
   'setup.combo': 'Combo',
+
+  'cast.tv': 'Mostrar en TV',
+  'cast.connecting': 'Conectando…',
+  'cast.live': 'TV conectada',
+  'cast.hint': 'Chromecast o segunda ventana',
+  'show.waiting': 'Esperando la partida…',
 
   'over.winner': 'Ganador',
   'over.byTimer': 'Se acabó el tiempo — gana la puntuación',
@@ -331,6 +355,8 @@ const pt: Dict = {
   'setup.handicap': 'Vantagem',
   'setup.mirror': 'Espelho TV',
   'setup.sound': 'Som',
+  'setup.camera': 'Câmera',
+  'setup.cameraN': 'Câmera {n}',
   'setup.start': 'COMEÇAR',
   'setup.hint': 'Ambos os jogadores totalmente visíveis. Esquerda azul, direita vermelha.',
 
@@ -350,6 +376,12 @@ const pt: Dict = {
   'hud.freeze': 'ESTÁTUA!',
   'setup.freeze': 'Estátua!',
   'setup.combo': 'Combo',
+
+  'cast.tv': 'Mostrar na TV',
+  'cast.connecting': 'Conectando…',
+  'cast.live': 'TV conectada',
+  'cast.hint': 'Chromecast ou segunda janela',
+  'show.waiting': 'À espera da partida…',
 
   'over.winner': 'Vencedor',
   'over.byTimer': 'Tempo esgotado — vence a pontuação',

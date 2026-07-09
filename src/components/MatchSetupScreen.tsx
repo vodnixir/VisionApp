@@ -1,5 +1,14 @@
-import { ArrowLeft, Flame, FlipHorizontal2, Snowflake, Volume2, VolumeX, Zap } from 'lucide-react'
-import { useState } from 'react'
+import {
+  ArrowLeft,
+  Camera,
+  Flame,
+  FlipHorizontal2,
+  Snowflake,
+  Volume2,
+  VolumeX,
+  Zap,
+} from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import { loadProfiles } from '../storage'
 import {
@@ -7,6 +16,7 @@ import {
   PLAYER_COLORS,
   ROUND_DURATION_MS,
   ROUND_MODES,
+  mirrorDefaultForLabel,
   type GameSettings,
   type PlayerProfile,
   type PlayerSlot,
@@ -20,10 +30,35 @@ interface Props {
   onBack: () => void
 }
 
+/** Video inputs of this device (labels are empty until a camera permission is granted). */
+function useCameras(): MediaDeviceInfo[] {
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([])
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    let alive = true
+    const refresh = () => {
+      navigator.mediaDevices
+        .enumerateDevices()
+        .then((all) => {
+          if (alive) setCameras(all.filter((d) => d.kind === 'videoinput'))
+        })
+        .catch(() => {})
+    }
+    refresh()
+    navigator.mediaDevices.addEventListener?.('devicechange', refresh)
+    return () => {
+      alive = false
+      navigator.mediaDevices.removeEventListener?.('devicechange', refresh)
+    }
+  }, [])
+  return cameras
+}
+
 /** Match setup for the host: pick two players, round length, head start — GO. */
 export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBack }: Props) {
   const { t } = useI18n()
   const [profiles] = useState<PlayerProfile[]>(loadProfiles)
+  const cameras = useCameras()
 
   return (
     <div className="arena-grid absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-arena-950 px-4 py-6">
@@ -83,6 +118,36 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
             ))}
           </div>
         </div>
+
+        {cameras.length > 1 && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="mb-3 flex items-center gap-2 text-xs font-semibold tracking-[0.2em] text-slate-500">
+              <Camera className="size-4" aria-hidden />
+              {t('setup.camera').toUpperCase()}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {cameras.map((cam, i) => {
+                const active =
+                  settings.cameraId === cam.deviceId || (settings.cameraId === null && i === 0)
+                return (
+                  <Chip
+                    key={cam.deviceId || i}
+                    active={active}
+                    label={cam.label || t('setup.cameraN', { n: i + 1 })}
+                    onClick={() =>
+                      // Picking a camera also resets the mirror to its natural
+                      // default: front = mirrored, rear/external = not.
+                      onPatch({
+                        cameraId: i === 0 ? null : cam.deviceId,
+                        mirrorMode: mirrorDefaultForLabel(cam.label),
+                      })
+                    }
+                  />
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Toggle

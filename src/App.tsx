@@ -8,11 +8,13 @@ import { MatchSetupScreen } from './components/MatchSetupScreen'
 import { RosterScreen } from './components/RosterScreen'
 import { ErrorOverlay, LoadingOverlay } from './components/StatusOverlay'
 import { TournamentScreen } from './components/TournamentScreen'
+import { DEFAULT_HUD } from './cv/draw'
 import type { EngineFrame, EngineHints } from './cv/engine'
 import { useGameState } from './hooks/useGameState'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
 import { useI18n } from './i18n'
 import { MatchRecorder, type MatchClip } from './recorder'
+import { ShowCast, type CastStatus } from './show'
 import {
   loadTournament,
   recordMatchResult,
@@ -131,6 +133,10 @@ export default function App() {
   const [pendingBracket, setPendingBracket] = useState<{ round: number; index: number } | null>(null)
   const accumRef = useRef<Accumulators>(createAccumulators())
   const recorderRef = useRef(new MatchRecorder())
+  const showRef = useRef<ShowCast | null>(null)
+  showRef.current ??= new ShowCast()
+  const show = showRef.current
+  const [castStatus, setCastStatus] = useState<CastStatus>('idle')
   const wakeLock = useWakeLock()
 
   const playerNames = useCallback(
@@ -174,18 +180,18 @@ export default function App() {
     )
 
     // The canvas keeps celebrating — the clip records the splash for CLIP_TAIL_MS.
-    configure({
-      hud: {
-        mode: 'victory',
-        progress: [a.progress[0], a.progress[1]],
-        remainingMs: 0,
-        frozen: false,
-        combo: [1, 1],
-        winnerIndex,
-        winnerName: names[winnerIndex],
-        endedByTimer,
-      },
-    })
+    const victoryHud = {
+      mode: 'victory' as const,
+      progress: [a.progress[0], a.progress[1]] as [number, number],
+      remainingMs: 0,
+      frozen: false,
+      combo: [1, 1] as [number, number],
+      winnerIndex,
+      winnerName: names[winnerIndex],
+      endedByTimer,
+    }
+    configure({ hud: victoryHud })
+    show.sendState({ hud: victoryHud, names, phase: 'over' })
     void recorderRef.current.finish(CLIP_TAIL_MS).then((c) => setClip(c))
 
     dispatch({ type: 'MATCH_END', results })
@@ -272,18 +278,18 @@ export default function App() {
       }
 
       const toPercent = (v: number) => (v / target) * 100
-      configure({
-        hud: {
-          mode: 'match',
-          progress: [toPercent(a.progress[0]), toPercent(a.progress[1])],
-          remainingMs: Math.max(0, remaining),
-          frozen,
-          combo: [a.comboMult[0], a.comboMult[1]],
-          winnerIndex: null,
-          winnerName: '',
-          endedByTimer: false,
-        },
-      })
+      const matchHud = {
+        mode: 'match' as const,
+        progress: [toPercent(a.progress[0]), toPercent(a.progress[1])] as [number, number],
+        remainingMs: Math.max(0, remaining),
+        frozen,
+        combo: [a.comboMult[0], a.comboMult[1]] as [number, number],
+        winnerIndex: null,
+        winnerName: '',
+        endedByTimer: false,
+      }
+      configure({ hud: matchHud })
+      show.sendState({ hud: matchHud, names: playerNames(g.settings), phase: 'playing' })
 
       const p0Won = a.progress[0] >= target
       const p1Won = a.progress[1] >= target
@@ -389,20 +395,46 @@ export default function App() {
   // Fresh calibration → clean HUD (a rematch inherits the victory splash otherwise).
   useEffect(() => {
     if (game.phase === 'CALIBRATION') {
-      configure({
-        hud: {
-          mode: 'none',
-          progress: [0, 0],
-          remainingMs: 0,
-          frozen: false,
-          combo: [1, 1],
-          winnerIndex: null,
-          winnerName: '',
-          endedByTimer: false,
-        },
-      })
+      configure({ hud: { ...DEFAULT_HUD } })
     }
   }, [game.phase, configure])
+
+  /* ---------------- TV show (Chromecast / second window) ---------------- */
+
+  useEffect(() => {
+    show.onStatus = setCastStatus
+    return () => {
+      show.onStatus = null
+    }
+  }, [show])
+
+  // Keep the TV in the loop outside of live scoring: menu = waiting splash,
+  // calibration = "X VS Y" title card (the PLAYING/over pushes happen per frame).
+  useEffect(() => {
+    if (game.phase === 'PLAYING' || game.phase === 'GAME_OVER') return
+    show.sendState({
+      hud: { ...DEFAULT_HUD },
+      names: playerNames(game.settings),
+      phase: game.phase === 'CALIBRATION' ? 'calibration' : 'idle',
+    })
+  }, [game.phase, game.settings, playerNames, show])
+
+  // Stream the arena canvas to the TV whenever both are alive. attachMedia is
+  // safe to repeat — it renegotiates a fresh WebRTC peer.
+  useEffect(() => {
+    if (status !== 'running' || castStatus !== 'live') return
+    if (!canvasRef.current) return
+    show.attachMedia(
+      canvasRef.current,
+      gameRef.current.settings.soundEnabled ? sfx.captureStream() : null,
+    )
+    return () => show.detachMedia()
+  }, [status, castStatus, show, canvasRef])
+
+  const handleCast = () => {
+    if (show.active) show.stop()
+    else void show.start()
+  }
 
   // Persist settings so the next party starts pre-configured.
   useEffect(() => {
@@ -444,7 +476,7 @@ export default function App() {
     resetRoundState()
     saveLastPlayers(gameRef.current.settings.players)
     dispatch({ type: 'START_CALIBRATION' })
-    void start()
+    void start(gameRef.current.settings.cameraId)
   }
 
   const handleQuickStart = () => {
@@ -507,6 +539,9 @@ export default function App() {
           onTournament={() => dispatch({ type: 'NAVIGATE', to: 'TOURNAMENT' })}
           onRoster={() => dispatch({ type: 'NAVIGATE', to: 'ROSTER' })}
           tournamentActive={tournament !== null}
+          castSupported={show.supported()}
+          castStatus={castStatus}
+          onCast={handleCast}
         />
       )}
 

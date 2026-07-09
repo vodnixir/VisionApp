@@ -44,7 +44,7 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
   const [status, setStatus] = useState<EngineStatus>('idle')
   const [error, setError] = useState<string | null>(null)
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (cameraId?: string | null) => {
     if (engineRef.current) return
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -79,7 +79,7 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     )
     engineRef.current = engine
     try {
-      await engine.start()
+      await engine.start(cameraId)
       if (engineRef.current !== engine) return // destroyed while booting
       setStatus('running')
     } catch (err) {
