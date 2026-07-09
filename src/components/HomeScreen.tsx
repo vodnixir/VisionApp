@@ -1,6 +1,7 @@
 import { Cast, Swords, Trophy, Users, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { LANGS, useI18n } from '../i18n'
+import { loadSession, sessionLeader } from '../session'
 import type { CastStatus } from '../show'
 import { loadProfiles } from '../storage'
 
@@ -26,6 +27,9 @@ export function HomeScreen({
 }: Props) {
   const { t, lang, setLang } = useI18n()
   const [profileCount] = useState(() => loadProfiles().length)
+  // Refreshes whenever we come back to Home (the component remounts).
+  const [session] = useState(loadSession)
+  const leader = sessionLeader(session)
   const castLabel =
     castStatus === 'live'
       ? t('cast.live')
@@ -133,6 +137,20 @@ export function HomeScreen({
               <span className="size-2.5 rounded-full bg-neon-green shadow-[0_0_8px_rgba(57,255,136,0.8)]" />
             )}
           </button>
+        )}
+
+        {session.matches > 0 && (
+          <p className="text-center text-xs text-slate-500">
+            {t('home.session', { n: session.matches })}
+            {leader && (
+              <>
+                {' · '}
+                <span className="font-bold text-neon-yellow">
+                  {t('home.sessionLeader', { name: leader.name, n: leader.wins })}
+                </span>
+              </>
+            )}
+          </p>
         )}
 
         <p className="mt-auto pt-6 text-center text-xs text-slate-600">{t('home.footer')}</p>

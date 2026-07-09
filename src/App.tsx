@@ -14,6 +14,7 @@ import { useGameState } from './hooks/useGameState'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
 import { useI18n } from './i18n'
 import { MatchRecorder, type MatchClip } from './recorder'
+import { recordSessionMatch } from './session'
 import { ShowCast, type CastStatus } from './show'
 import {
   loadTournament,
@@ -218,6 +219,8 @@ export default function App() {
         maxSpeed: a.maxSpeed[i],
       })),
     )
+    // Tonight's tally for the host (co-op: the whole team scores the win).
+    recordSessionMatch(coop ? (winnerIndex === 0 ? [...names] : []) : [names[winnerIndex]])
 
     // The canvas keeps celebrating — the clip records the splash for CLIP_TAIL_MS.
     const victoryHud = {

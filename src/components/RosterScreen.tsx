@@ -1,8 +1,63 @@
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Crown, Gauge, Medal, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 import { MAX_PROFILES, createProfile, loadProfiles, saveProfiles } from '../storage'
 import { beltFor, type PlayerProfile } from '../types'
+
+/** The house record book: best of the saved roster, updated after every match. */
+function RecordBook({ profiles }: { profiles: PlayerProfile[] }) {
+  const { t } = useI18n()
+  const withMatches = profiles.filter((p) => p.matches > 0)
+  if (withMatches.length === 0) return null
+  const top = (score: (p: PlayerProfile) => number) =>
+    [...withMatches].sort((a, b) => score(b) - score(a))[0]
+  const champion = top((p) => p.wins)
+  const fastest = top((p) => p.bestSpeed ?? 0)
+  const busiest = top((p) => p.matches)
+  const rows: Array<{ icon: React.ReactNode; label: string; name: string; value: string }> = [
+    {
+      icon: <Crown className="size-4 text-neon-yellow" aria-hidden />,
+      label: t('records.champion'),
+      name: champion.name,
+      value: `${champion.wins}`,
+    },
+    ...(fastest.bestSpeed
+      ? [
+          {
+            icon: <Gauge className="size-4 text-neon-blue" aria-hidden />,
+            label: t('records.fastest'),
+            name: fastest.name,
+            value: `${Math.round((fastest.bestSpeed ?? 0) * 100)}%`,
+          },
+        ]
+      : []),
+    {
+      icon: <Medal className="size-4 text-slate-300" aria-hidden />,
+      label: t('records.active'),
+      name: busiest.name,
+      value: `${busiest.matches}`,
+    },
+  ]
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <p className="mb-2.5 text-xs font-semibold tracking-[0.2em] text-slate-500">
+        {t('records.title').toUpperCase()}
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-2 text-sm">
+            {r.icon}
+            <span className="text-slate-500">{r.label}</span>
+            <span className="ml-auto font-bold text-white">{r.name}</span>
+            <span className="w-12 text-right font-black tabular-nums text-neon-yellow">
+              {r.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 interface Props {
   onBack: () => void
@@ -70,6 +125,8 @@ export function RosterScreen({ onBack }: Props) {
           </button>
         </div>
         {full && <p className="text-xs text-neon-yellow">{t('roster.full')}</p>}
+
+        <RecordBook profiles={profiles} />
 
         {profiles.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-white/10 px-5 py-8 text-center text-sm leading-relaxed text-slate-500">

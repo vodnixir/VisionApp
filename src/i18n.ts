@@ -88,6 +88,13 @@ const en = {
   'cast.hint': 'Chromecast or a second window',
   'show.waiting': 'Waiting for the match…',
 
+  'home.session': 'This session: {n} matches',
+  'home.sessionLeader': 'leader {name} ({n})',
+  'records.title': 'Record book',
+  'records.champion': 'Champion',
+  'records.fastest': 'Fastest',
+  'records.active': 'Most matches',
+
   'over.winner': 'Winner',
   'over.byTimer': 'Time is up — higher score wins',
   'over.time': 'Match time',
@@ -213,6 +220,13 @@ const ru: Dict = {
   'cast.hint': 'Chromecast или второе окно',
   'show.waiting': 'Ждём матч…',
 
+  'home.session': 'За эту сессию: {n} матчей',
+  'home.sessionLeader': 'лидер {name} ({n})',
+  'records.title': 'Книга рекордов',
+  'records.champion': 'Чемпион',
+  'records.fastest': 'Самый быстрый',
+  'records.active': 'Больше всех матчей',
+
   'over.winner': 'Победитель',
   'over.byTimer': 'Время вышло — побеждает счёт',
   'over.time': 'Время матча',
@@ -334,6 +348,13 @@ const es: Dict = {
   'cast.hint': 'Chromecast o segunda ventana',
   'show.waiting': 'Esperando la partida…',
 
+  'home.session': 'Esta sesión: {n} partidas',
+  'home.sessionLeader': 'líder {name} ({n})',
+  'records.title': 'Libro de récords',
+  'records.champion': 'Campeón',
+  'records.fastest': 'Más rápido',
+  'records.active': 'Más partidas',
+
   'over.winner': 'Ganador',
   'over.byTimer': 'Se acabó el tiempo — gana la puntuación',
   'over.time': 'Duración',
@@ -454,6 +475,13 @@ const pt: Dict = {
   'cast.live': 'TV conectada',
   'cast.hint': 'Chromecast ou segunda janela',
   'show.waiting': 'À espera da partida…',
+
+  'home.session': 'Esta sessão: {n} partidas',
+  'home.sessionLeader': 'líder {name} ({n})',
+  'records.title': 'Livro de recordes',
+  'records.champion': 'Campeão',
+  'records.fastest': 'Mais rápido',
+  'records.active': 'Mais partidas',
 
   'over.winner': 'Vencedor',
   'over.byTimer': 'Tempo esgotado — vence a pontuação',
