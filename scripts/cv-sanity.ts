@@ -1,9 +1,10 @@
 /**
  * Sanity tests for the pure CV math (run: npm run test:cv).
  * Covers the parts that a headless browser can't exercise: identity matching,
- * ROI geometry and motion-scoring fairness.
+ * ROI geometry, motion-scoring fairness and the portrait clip layout.
  */
 import assert from 'node:assert/strict'
+import { PORTRAIT_H, PORTRAIT_W, coverCrop, portraitLayout } from '../src/recorder'
 import {
   REBIND_WINDOW_MS,
   computeRoi,
@@ -187,6 +188,33 @@ ok('identical boxes → 1, disjoint → 0', () => {
   const a = { x: 0, y: 0, w: 100, h: 100 }
   assert.ok(Math.abs(iou(a, { ...a }) - 1) < 1e-9)
   assert.equal(iou(a, { x: 500, y: 500, w: 50, h: 50 }), 0)
+})
+
+console.log('portrait clip layout')
+
+ok('coverCrop of a 16:9 source to 9:16 crops a centered vertical slice', () => {
+  const c = coverCrop(1280, 720, PORTRAIT_W / PORTRAIT_H)
+  assert.equal(c.h, 720, 'full height kept')
+  assert.ok(Math.abs(c.w - 405) < 1e-9, '720 * 9/16 = 405 wide')
+  assert.ok(Math.abs(c.x - (1280 - 405) / 2) < 1e-9, 'horizontally centered')
+  assert.equal(c.y, 0)
+})
+
+ok('portraitLayout letterboxes a 16:9 source with headroom above', () => {
+  const l = portraitLayout(1280, 720)
+  assert.equal(l.w, PORTRAIT_W, 'fits the full portrait width')
+  assert.equal(l.h, Math.round((720 * PORTRAIT_W) / 1280))
+  assert.equal(l.x, 0)
+  assert.ok(l.y > 170, 'enough band above for the wordmark')
+  assert.ok(PORTRAIT_H - (l.y + l.h) > 170, 'enough band below for the hashtag')
+})
+
+ok('portraitLayout of an already-portrait source fills the frame', () => {
+  const l = portraitLayout(720, 1280)
+  assert.equal(l.w, PORTRAIT_W)
+  assert.equal(l.h, PORTRAIT_H)
+  assert.equal(l.x, 0)
+  assert.equal(l.y, 0)
 })
 
 console.log(`\n${passed} checks passed`)
