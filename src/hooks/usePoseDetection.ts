@@ -37,6 +37,7 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     drawOverlays: true,
     rolesLocked: false,
     hud: { ...DEFAULT_HUD },
+    mask: false,
   })
   const onFrameRef = useRef(onFrame)
   onFrameRef.current = onFrame

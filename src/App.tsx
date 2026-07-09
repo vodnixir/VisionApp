@@ -23,14 +23,25 @@ import {
   saveTournament,
 } from './storage'
 import {
+  RHYTHM_PERIOD_MS,
+  bossCharge,
+  createModeState,
+  modeTick,
+  type ModeState,
+} from './modes'
+import {
   ARENA_PHASES,
   COMBO_GRACE_MS,
   COMBO_SPEED_MIN,
   FILL_RATE,
   FREEZE_WINDOW_MS,
+  OVERTIME_DELTA,
+  OVERTIME_MAX_MS,
   ROUND_DURATION_MS,
   comboMultiplier,
+  isOvertimeTie,
   type GameSettings,
+  type MatchMode,
   type MatchResults,
 } from './types'
 
@@ -65,11 +76,24 @@ interface Accumulators {
   /** Current fill multiplier per player (1 = no streak). */
   comboMult: [number, number]
   maxCombo: [number, number]
+  /** Per-mode machinery (beats, traffic light, boss attacks). */
+  modeState: ModeState
+  /** Sudden death after a buzzer tie. */
+  overtime: boolean
+  otBase: [number, number]
+  otStartedAt: number
+  /** Short visual flashes (rhythm hits, boss attacks), absolute deadlines. */
+  beatFlashUntil: [number, number]
+  bossFlashUntil: number
 }
 
-function createAccumulators(handicap: [number, number] = [0, 0]): Accumulators {
+function createAccumulators(
+  handicap: [number, number] = [0, 0],
+  mode: MatchMode = 'classic',
+): Accumulators {
   return {
-    progress: [handicap[0], handicap[1]],
+    // The boss bar is shared — individual head starts don't apply.
+    progress: mode === 'boss' ? [0, 0] : [handicap[0], handicap[1]],
     maxSpeed: [0, 0],
     speedIntegral: [0, 0],
     time: 0,
@@ -81,6 +105,12 @@ function createAccumulators(handicap: [number, number] = [0, 0]): Accumulators {
     comboDipMs: [0, 0],
     comboMult: [1, 1],
     maxCombo: [1, 1],
+    modeState: createModeState(mode),
+    overtime: false,
+    otBase: [0, 0],
+    otStartedAt: 0,
+    beatFlashUntil: [0, 0],
+    bossFlashUntil: 0,
   }
 }
 
@@ -153,16 +183,26 @@ export default function App() {
     const g = gameRef.current
     const a = accumRef.current
     const names = playerNames(g.settings)
+    const mode = g.settings.matchMode
+    const coop = mode === 'boss'
+    const teamLabel = `${names[0]} + ${names[1]}`
+    const winnerName = coop
+      ? winnerIndex === 0
+        ? teamLabel
+        : t('hud.boss')
+      : names[winnerIndex]
     const results: MatchResults = {
       winnerIndex,
-      winnerName: names[winnerIndex],
+      winnerName,
       durationMs: now - (g.matchStartedAt ?? now),
       roundMode: g.settings.roundMode,
+      matchMode: mode,
       endedByTimer,
       players: ([0, 1] as const).map((i) => ({
         name: names[i],
         profileId: g.settings.players[i].profileId,
-        progress: a.progress[i],
+        // Co-op: both kids share the team bar; speeds stay individual.
+        progress: coop ? a.progress[0] : a.progress[i],
         maxSpeed: a.maxSpeed[i],
         avgSpeed: a.time > 0 ? a.speedIntegral[i] / a.time : 0,
         maxCombo: a.maxCombo[i],
@@ -174,7 +214,7 @@ export default function App() {
     recordMatchResult(
       ([0, 1] as const).map((i) => ({
         profileId: g.settings.players[i].profileId,
-        won: i === winnerIndex,
+        won: coop ? winnerIndex === 0 : i === winnerIndex,
         maxSpeed: a.maxSpeed[i],
       })),
     )
@@ -187,11 +227,15 @@ export default function App() {
       frozen: false,
       combo: [1, 1] as [number, number],
       winnerIndex,
-      winnerName: names[winnerIndex],
+      winnerName,
       endedByTimer,
     }
     configure({ hud: victoryHud })
-    show.sendState({ hud: victoryHud, names, phase: 'over' })
+    show.sendState({
+      hud: victoryHud,
+      names: coop ? [teamLabel, t('hud.boss')] : names,
+      phase: 'over',
+    })
     void recorderRef.current.finish(CLIP_TAIL_MS).then((c) => setClip(c))
 
     dispatch({ type: 'MATCH_END', results })
@@ -229,12 +273,14 @@ export default function App() {
       const a = accumRef.current
       if (a.finished) return
       const target = g.settings.targetScore
+      const mode = g.settings.matchMode
       const rate = FILL_RATE[g.settings.roundMode]
       const durationMs = ROUND_DURATION_MS[g.settings.roundMode]
       const elapsed = frame.now - (g.matchStartedAt ?? frame.now)
       const remaining = durationMs - elapsed
+      const speeds: [number, number] = [frame.players[0].speed, frame.players[1].speed]
 
-      // "Freeze!" window: moving now DRAINS your bar instead of filling it.
+      // "Freeze!" window (classic-mode modifier): moving now DRAINS your bar.
       const frozen = a.freezes.some((f) => elapsed >= f.start && elapsed < f.end)
       if (frozen !== a.frozen) {
         a.frozen = frozen
@@ -242,14 +288,29 @@ export default function App() {
         else sfx.release()
       }
 
+      // Mode layer: how much fill/burn this frame + what just happened.
+      const tick = modeTick(a.modeState, { dt: frame.dt, elapsedMs: elapsed, speeds, rate })
+      if (tick.events.beat) sfx.tick()
+      if (tick.events.hit) {
+        for (const i of [0, 1] as const) {
+          if (tick.events.hit[i]) a.beatFlashUntil[i] = frame.now + 220
+        }
+      }
+      if (tick.events.trafficSwitch === 'red') sfx.whistle()
+      else if (tick.events.trafficSwitch === 'green') sfx.release()
+      if (tick.events.bossAttack !== undefined) {
+        sfx.roar()
+        a.bossFlashUntil = frame.now + 280
+      }
+
       a.time += frame.dt
       for (const i of [0, 1] as const) {
-        const speed = frame.players[i].speed
+        const speed = speeds[i]
 
-        // Combo streak: continuous movement compounds the fill rate (up to ×2).
-        // A freeze window HOLDS the streak while you stand still — flinching
-        // burns it along with your bar.
-        if (g.settings.comboMode) {
+        // Combo streak: continuous movement compounds the fill rate (up to ×2)
+        // in modes where that's fair (classic). A freeze window HOLDS the
+        // streak while you stand still — flinching burns it with your bar.
+        if (g.settings.comboMode && tick.comboEligible) {
           if (frozen) {
             if (speed >= COMBO_SPEED_MIN) {
               a.comboMs[i] = 0
@@ -268,15 +329,24 @@ export default function App() {
           if (mult > a.maxCombo[i]) a.maxCombo[i] = mult
         }
 
-        // The freeze penalty is never combo-amplified — only the gain is.
-        const delta = speed * rate * frame.dt
-        a.progress[i] = frozen
-          ? Math.max(a.progress[i] - delta, 0)
-          : Math.min(a.progress[i] + delta * a.comboMult[i], target)
+        // Penalties (freeze / red light / boss hits) are never combo-amplified.
+        if (frozen) {
+          a.progress[i] = Math.max(a.progress[i] - speed * rate * frame.dt, 0)
+        } else {
+          a.progress[i] = Math.min(
+            Math.max(a.progress[i] + tick.fill[i] * a.comboMult[i] - tick.burn[i], 0),
+            target,
+          )
+        }
         if (speed > a.maxSpeed[i]) a.maxSpeed[i] = speed
         a.speedIntegral[i] += speed * frame.dt
       }
+      // Boss mode: the right panel shows the boss attack charging up.
+      if (mode === 'boss') {
+        a.progress[1] = (bossCharge(a.modeState, elapsed) / 100) * target
+      }
 
+      const names = playerNames(g.settings)
       const toPercent = (v: number) => (v / target) * 100
       const matchHud = {
         mode: 'match' as const,
@@ -287,13 +357,76 @@ export default function App() {
         winnerIndex: null,
         winnerName: '',
         endedByTimer: false,
+        overtime: a.overtime,
+        beatPhase:
+          mode === 'rhythm' ? (elapsed % RHYTHM_PERIOD_MS) / RHYTHM_PERIOD_MS : undefined,
+        beatFlash:
+          mode === 'rhythm'
+            ? ([frame.now < a.beatFlashUntil[0], frame.now < a.beatFlashUntil[1]] as [
+                boolean,
+                boolean,
+              ])
+            : undefined,
+        traffic: mode === 'traffic' ? (a.modeState.red ? ('red' as const) : ('green' as const)) : undefined,
+        coop: mode === 'boss' ? true : undefined,
+        bossFlash: mode === 'boss' && frame.now < a.bossFlashUntil ? true : undefined,
+        panelNames:
+          mode === 'boss'
+            ? ([`${names[0]} + ${names[1]}`, t('hud.boss')] as [string, string])
+            : undefined,
       }
       configure({ hud: matchHud })
-      show.sendState({ hud: matchHud, names: playerNames(g.settings), phase: 'playing' })
+      show.sendState({
+        hud: matchHud,
+        names: mode === 'boss' ? [`${names[0]} + ${names[1]}`, t('hud.boss')] : names,
+        phase: 'playing',
+      })
+
+      const timeUp = remaining <= 0
+
+      // Co-op: the team races the clock, the boss "wins" on the buzzer.
+      if (mode === 'boss') {
+        if (a.progress[0] >= target) {
+          a.finished = true
+          finishMatch(0, frame.now, false)
+        } else if (timeUp) {
+          a.finished = true
+          finishMatch(1, frame.now, true)
+        }
+        return
+      }
 
       const p0Won = a.progress[0] >= target
       const p1Won = a.progress[1] >= target
-      const timeUp = remaining <= 0
+
+      // Buzzer with a near-tie → OVERTIME: first to +OVERTIME_DELTA wins.
+      if (
+        !p0Won &&
+        !p1Won &&
+        timeUp &&
+        !a.overtime &&
+        isOvertimeTie(a.progress[0], a.progress[1])
+      ) {
+        a.overtime = true
+        a.otBase = [a.progress[0], a.progress[1]]
+        a.otStartedAt = frame.now
+        sfx.alert()
+        return
+      }
+
+      if (a.overtime) {
+        const d0 = a.progress[0] - a.otBase[0]
+        const d1 = a.progress[1] - a.otBase[1]
+        const decided =
+          p0Won || p1Won || d0 >= OVERTIME_DELTA || d1 >= OVERTIME_DELTA ||
+          frame.now - a.otStartedAt >= OVERTIME_MAX_MS
+        if (!decided) return
+        a.finished = true
+        const winner: 0 | 1 =
+          d0 !== d1 ? (d0 > d1 ? 0 : 1) : speeds[0] >= speeds[1] ? 0 : 1
+        finishMatch(winner, frame.now, true)
+        return
+      }
 
       if (!p0Won && !p1Won && !timeUp) return
 
@@ -309,7 +442,7 @@ export default function App() {
             ? a.progress[0] > a.progress[1]
               ? 0
               : 1
-            : frame.players[0].speed >= frame.players[1].speed
+            : speeds[0] >= speeds[1]
               ? 0
               : 1
       }
@@ -323,8 +456,9 @@ export default function App() {
 
   const startMatch = useCallback(() => {
     const settings = gameRef.current.settings
-    accumRef.current = createAccumulators(settings.handicap)
-    if (settings.freezeMode) {
+    accumRef.current = createAccumulators(settings.handicap, settings.matchMode)
+    // The freeze modifier belongs to classic; other modes bring their own rules.
+    if (settings.freezeMode && settings.matchMode === 'classic') {
       accumRef.current.freezes = generateFreezes(ROUND_DURATION_MS[settings.roundMode])
     }
     setClip(null)
@@ -380,6 +514,7 @@ export default function App() {
     configure({
       mirror: game.settings.mirrorMode,
       names: playerNames(game.settings),
+      mask: game.settings.maskMode,
       drawOverlays: ARENA_PHASES.includes(game.phase),
       scoring: game.phase === 'PLAYING',
       // From the countdown on, roles stick to the tracked bodies — kids can
@@ -504,7 +639,17 @@ export default function App() {
     const [a, b] = match.players
     if (!a || !b) return
     setPendingBracket({ round, index })
-    dispatch({ type: 'UPDATE_SETTINGS', patch: { players: [a, b], handicap: [0, 0] } })
+    dispatch({
+      type: 'UPDATE_SETTINGS',
+      patch: {
+        players: [a, b],
+        handicap: [0, 0],
+        // Brackets are 1v1 — the co-op boss mode falls back to classic.
+        ...(gameRef.current.settings.matchMode === 'boss'
+          ? { matchMode: 'classic' as const }
+          : {}),
+      },
+    })
     handleStart()
   }
 

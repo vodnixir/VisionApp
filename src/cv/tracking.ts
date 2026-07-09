@@ -356,6 +356,36 @@ export function emaBBox(prev: BBox, next: BBox, alpha: number): BBox {
   }
 }
 
+/* ---------------- Face anchor (for the privacy mask) ---------------- */
+
+export interface FaceAnchor {
+  x: number
+  y: number
+  r: number
+}
+
+const FACE_KEYPOINTS = ['nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear'] as const
+
+/**
+ * Face center + radius from the confident head keypoints. Radius covers the
+ * whole head (spread of the points, but never less than a bbox fraction so a
+ * lone nose detection still masks properly).
+ */
+export function faceAnchor(pose: Pose, bbox: BBox): FaceAnchor | null {
+  const pts: Array<{ x: number; y: number }> = []
+  for (const k of pose.keypoints) {
+    if (!k.name || !(FACE_KEYPOINTS as readonly string[]).includes(k.name)) continue
+    if ((k.score ?? 0) < KEYPOINT_MIN_SCORE) continue
+    pts.push({ x: k.x, y: k.y })
+  }
+  if (pts.length === 0) return null
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+  let spread = 0
+  for (const p of pts) spread = Math.max(spread, Math.hypot(p.x - cx, p.y - cy))
+  return { x: cx, y: cy, r: Math.max(spread * 1.8, bbox.w * 0.16) }
+}
+
 export function extractMotionKeypoints(pose: Pose): KpMap {
   const map: KpMap = new Map()
   for (const k of pose.keypoints) {
@@ -402,6 +432,8 @@ export class PlayerTracker implements SlotAnchor {
   bbox: BBox | null = null
   /** Smoothed activity, 0..1. */
   speed = 0
+  /** Smoothed head position for the privacy mask (null when no head points). */
+  face: FaceAnchor | null = null
   framesSinceSeen = Infinity
   lastBBox: BBox | null = null
   lastSeenAtMs = -Infinity
@@ -436,6 +468,18 @@ export class PlayerTracker implements SlotAnchor {
     this.lastBBox = this.bbox
     this.lastSeenAtMs = nowMs
 
+    const freshFace = faceAnchor(candidate.pose, this.bbox)
+    if (freshFace) {
+      const a = alphaFromTau(safeDt, BBOX_TAU_S)
+      this.face = this.face
+        ? {
+            x: ema(this.face.x, freshFace.x, a),
+            y: ema(this.face.y, freshFace.y, a),
+            r: ema(this.face.r, freshFace.r, a),
+          }
+        : freshFace
+    }
+
     const kp = extractMotionKeypoints(candidate.pose)
     if (scoring && this.prevKp && consecutive && dt > 0) {
       const diag = Math.hypot(this.bbox.w, this.bbox.h)
@@ -460,6 +504,7 @@ export class PlayerTracker implements SlotAnchor {
   private expire(): void {
     this.bbox = null
     this.prevKp = null
+    this.face = null
     this.speed = 0
     this.framesSinceSeen = Infinity
   }

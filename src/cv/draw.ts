@@ -15,6 +15,20 @@ export interface HudState {
   winnerIndex: 0 | 1 | null
   winnerName: string
   endedByTimer: boolean
+  /** Sudden death after a buzzer tie — first to +OVERTIME_DELTA wins. */
+  overtime?: boolean
+  /** Rhythm: 0..1 phase to the next beat (0 = right on the beat). */
+  beatPhase?: number
+  /** Rhythm: player i landed the beat just now (short panel flash). */
+  beatFlash?: [boolean, boolean]
+  /** Traffic light mode: current light (null/undefined = not in this mode). */
+  traffic?: 'red' | 'green' | null
+  /** Co-op boss: right panel is the boss attack charge, left is the team bar. */
+  coop?: boolean
+  /** Boss attack landed a moment ago — full-frame red flash. */
+  bossFlash?: boolean
+  /** Panel captions when they differ from the bracket labels (boss: TEAM / BOSS). */
+  panelNames?: [string, string]
 }
 
 export const DEFAULT_HUD: HudState = {
@@ -164,14 +178,41 @@ export function drawMatchHud(
   const centerW = Math.max(92, Math.round(w * 0.115))
   const panelH = Math.max(58, Math.round(h * 0.145))
   const panelW = Math.round((w - centerW - pad * 4) / 2)
+  const captions = hud.panelNames ?? names
 
-  drawPlayerPanel(ctx, pad, pad, panelW, panelH, names[0], hud.progress[0], 0)
-  drawPlayerPanel(ctx, w - pad - panelW, pad, panelW, panelH, names[1], hud.progress[1], 1)
+  drawPlayerPanel(ctx, pad, pad, panelW, panelH, captions[0], hud.progress[0], 0, hud.beatFlash?.[0])
+  drawPlayerPanel(
+    ctx,
+    w - pad - panelW,
+    pad,
+    panelW,
+    panelH,
+    captions[1],
+    hud.progress[1],
+    1,
+    hud.beatFlash?.[1],
+  )
 
   // Center timer chip.
   const timerH = Math.round(panelH * 0.78)
   const tx = Math.round((w - centerW) / 2)
   ctx.save()
+
+  // Rhythm: a ring around the timer breathing with the beat (biggest ON it).
+  if (hud.beatPhase !== undefined) {
+    const strength = 1 - Math.min(hud.beatPhase, 1)
+    ctx.strokeStyle = '#ffe600'
+    ctx.globalAlpha = 0.25 + 0.75 * strength ** 2
+    ctx.lineWidth = 3 + strength * 5
+    ctx.shadowColor = '#ffe600'
+    ctx.shadowBlur = 10 + strength * 22
+    ctx.beginPath()
+    ctx.arc(tx + centerW / 2, pad + timerH / 2, timerH * (0.72 + strength * 0.16), 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.globalAlpha = 1
+    ctx.shadowBlur = 0
+  }
+
   ctx.fillStyle = PANEL_BG
   roundedRect(ctx, tx, pad, centerW, timerH, 10)
   ctx.fill()
@@ -179,7 +220,7 @@ export function drawMatchHud(
   ctx.lineWidth = 1.5
   ctx.stroke()
 
-  const urgent = hud.remainingMs <= 5_500
+  const urgent = hud.overtime || hud.remainingMs <= 5_500
   const size = Math.round(timerH * 0.5)
   ctx.font = `900 ${size}px ${FONT}`
   ctx.textAlign = 'center'
@@ -194,10 +235,53 @@ export function drawMatchHud(
   } else {
     ctx.fillStyle = '#ffffff'
   }
-  ctx.fillText(formatClock(hud.remainingMs), tx + centerW / 2, pad + timerH / 2 + 1)
+  ctx.fillText(
+    hud.overtime ? 'OT' : formatClock(hud.remainingMs),
+    tx + centerW / 2,
+    pad + timerH / 2 + 1,
+  )
   ctx.restore()
 
+  if (hud.overtime) drawCenterBanner(ctx, w, h, t('hud.overtime'), '#ffe600', 0.085)
+  if (hud.traffic === 'red') {
+    ctx.save()
+    ctx.fillStyle = 'rgba(255, 45, 70, 0.13)'
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+    drawCenterBanner(ctx, w, h, t('hud.stop'), '#ff2e63', 0.12)
+  } else if (hud.traffic === 'green') {
+    drawCenterBanner(ctx, w, h, t('hud.go'), '#39ff88', 0.07)
+  }
+  if (hud.bossFlash) {
+    ctx.save()
+    ctx.fillStyle = 'rgba(255, 30, 50, 0.24)'
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+  }
+
   if (hud.frozen) drawFreezeBanner(ctx, w, h)
+}
+
+/** Pulsing announcement in the upper-middle of the arena (OVERTIME / STOP / GO). */
+function drawCenterBanner(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  text: string,
+  color: string,
+  sizeFrac: number,
+): void {
+  ctx.save()
+  const pulse = 0.78 + 0.22 * Math.abs(Math.sin(performance.now() / 170))
+  ctx.font = `900 ${Math.round(h * sizeFrac)}px ${FONT}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.globalAlpha = pulse
+  ctx.fillStyle = color
+  ctx.shadowColor = color
+  ctx.shadowBlur = 26
+  ctx.fillText(text, w / 2, h * 0.3)
+  ctx.restore()
 }
 
 /** Icy overlay + pulsing "FREEZE!" — anyone moving now is draining their bar. */
@@ -228,6 +312,7 @@ function drawPlayerPanel(
   name: string,
   progressPercent: number,
   playerIndex: 0 | 1,
+  flash?: boolean,
 ): void {
   const color = PLAYER_COLORS[playerIndex]
   const isLeft = playerIndex === 0
@@ -238,9 +323,15 @@ function drawPlayerPanel(
   roundedRect(ctx, x, y, w, h, 12)
   ctx.fill()
   ctx.strokeStyle = color
-  ctx.lineWidth = 2
+  // Rhythm hit → the whole panel pops for a beat.
+  ctx.lineWidth = flash ? 5 : 2
   ctx.globalAlpha = 0.95
+  if (flash) {
+    ctx.shadowColor = color
+    ctx.shadowBlur = 22
+  }
   ctx.stroke()
+  ctx.shadowBlur = 0
   ctx.globalAlpha = 1
 
   const inset = Math.round(h * 0.16)
@@ -280,6 +371,45 @@ function drawPlayerPanel(
     roundedRect(ctx, isLeft ? x + inset : x + inset + barW - fillW, barY, fillW, barH, barH / 2)
     ctx.fill()
   }
+  ctx.restore()
+}
+
+/**
+ * Privacy mask: a friendly robot face over the child's real one, in the
+ * player's color. Drawn on the canvas, so the TV picture AND the shared clip
+ * never contain the face (COPPA/GDPR-K friendly sharing).
+ */
+export function drawFaceMask(
+  ctx: CanvasRenderingContext2D,
+  face: { x: number; y: number; r: number },
+  color: string,
+  alpha: number,
+): void {
+  const { x, y, r } = face
+  ctx.save()
+  ctx.globalAlpha = alpha
+  // Opaque disc — fully covers the face.
+  ctx.fillStyle = '#0b1020'
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = color
+  ctx.lineWidth = Math.max(2, r * 0.09)
+  ctx.shadowColor = color
+  ctx.shadowBlur = 12
+  ctx.stroke()
+  ctx.shadowBlur = 0
+  // Simple robot smile: two eyes + a mouth arc.
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(x - r * 0.35, y - r * 0.18, r * 0.13, 0, Math.PI * 2)
+  ctx.arc(x + r * 0.35, y - r * 0.18, r * 0.13, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = color
+  ctx.lineWidth = Math.max(2, r * 0.08)
+  ctx.beginPath()
+  ctx.arc(x, y + r * 0.12, r * 0.42, Math.PI * 0.18, Math.PI * 0.82)
+  ctx.stroke()
   ctx.restore()
 }
 

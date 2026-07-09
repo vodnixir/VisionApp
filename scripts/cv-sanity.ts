@@ -4,8 +4,25 @@
  * ROI geometry, motion-scoring fairness and the portrait clip layout.
  */
 import assert from 'node:assert/strict'
+import {
+  BOSS_ATTACK_DAMAGE_GROWTH,
+  BOSS_ATTACK_DAMAGE_START,
+  BOSS_ATTACK_EVERY_MS,
+  ENDURANCE_GRACE_MS,
+  RHYTHM_PERIOD_MS,
+  RHYTHM_WINDOW_MS,
+  TRAFFIC_GREEN_MIN_MS,
+  bossCharge,
+  createModeState,
+  modeTick,
+} from '../src/modes'
 import { PORTRAIT_H, PORTRAIT_W, coverCrop, portraitLayout } from '../src/recorder'
-import { COMBO_TIERS, comboMultiplier, mirrorDefaultForLabel } from '../src/types'
+import {
+  COMBO_TIERS,
+  comboMultiplier,
+  isOvertimeTie,
+  mirrorDefaultForLabel,
+} from '../src/types'
 import {
   REBIND_WINDOW_MS,
   computeRoi,
@@ -246,6 +263,84 @@ ok('front/unknown cameras mirror, rear/external ones do not', () => {
   assert.equal(mirrorDefaultForLabel('Задняя камера'), false)
   assert.equal(mirrorDefaultForLabel('USB-камера (тыл)'), false)
   assert.equal(mirrorDefaultForLabel('Logitech HD Webcam C270'), true)
+})
+
+console.log('game modes')
+
+ok('rhythm: on-beat movement lands ONE hit per beat, off-beat only trickles', () => {
+  const s = createModeState('rhythm', () => 0.5)
+  const input = (elapsedMs: number, speed: number) => ({
+    dt: 0.03,
+    elapsedMs,
+    speeds: [speed, 0] as [number, number],
+    rate: 6.5,
+  })
+  // Right on beat 1, fast → full hit payout.
+  const onBeat = modeTick(s, input(RHYTHM_PERIOD_MS, 0.9))
+  assert.ok(onBeat.events.hit?.[0], 'hit registered')
+  assert.ok(onBeat.fill[0] > 3, 'hit pays roughly a beat worth of fill')
+  // Same window again → no double dip.
+  const again = modeTick(s, input(RHYTHM_PERIOD_MS + 40, 0.9))
+  assert.equal(again.events.hit, undefined)
+  assert.ok(again.fill[0] < 0.1, 'only the trickle remains')
+  // Between beats, fast → trickle only.
+  const off = modeTick(s, input(RHYTHM_PERIOD_MS * 1.5, 0.9))
+  assert.equal(off.events.hit, undefined)
+  assert.ok(off.fill[0] < 0.1)
+  // The window opens EARLY (just before beat 2) too.
+  const early = modeTick(s, input(RHYTHM_PERIOD_MS * 2 - RHYTHM_WINDOW_MS + 10, 0.9))
+  assert.ok(early.events.hit?.[0], 'early hit inside the pre-beat window counts')
+})
+
+ok('endurance: grace absorbs short dips, then the bar burns', () => {
+  const s = createModeState('endurance')
+  const tick = (elapsedMs: number, speed: number) =>
+    modeTick(s, { dt: 0.1, elapsedMs, speeds: [speed, 0.8], rate: 6.5 })
+  const moving = tick(1000, 0.8)
+  assert.ok(moving.fill[0] > 0 && moving.burn[0] === 0)
+  // 0.5 s below pace — inside the grace, no burn yet.
+  for (let t = 0; t < 5; t++) assert.equal(tick(2000 + t * 100, 0.1).burn[0], 0)
+  // Past the grace → burning.
+  for (let t = 0; t < 5; t++) tick(2600 + t * 100, 0.1)
+  assert.ok(tick(3200, 0.1).burn[0] > 0, 'burn after grace expires')
+  assert.ok(s.dipMs[0] > ENDURANCE_GRACE_MS)
+  // Player 1 never dipped.
+  assert.equal(s.dipMs[1], 0)
+})
+
+ok('traffic: deterministic light schedule, red burns movement', () => {
+  const s = createModeState('traffic', () => 0) // greens = 3000ms, reds = 1800ms
+  const tick = (elapsedMs: number) =>
+    modeTick(s, { dt: 0.03, elapsedMs, speeds: [0.8, 0.8], rate: 6.5 }, () => 0)
+  const green = tick(1000)
+  assert.ok(green.fill[0] > 0 && green.burn[0] === 0, 'green fills')
+  const flip = tick(TRAFFIC_GREEN_MIN_MS + 1)
+  assert.equal(flip.events.trafficSwitch, 'red')
+  assert.ok(flip.burn[0] > 0 && flip.fill[0] === 0, 'moving on red burns')
+  const back = tick(TRAFFIC_GREEN_MIN_MS + 1801)
+  assert.equal(back.events.trafficSwitch, 'green')
+})
+
+ok('boss: attacks land on schedule and grow; charge maps 0→100', () => {
+  const s = createModeState('boss')
+  const tick = (elapsedMs: number) =>
+    modeTick(s, { dt: 0.03, elapsedMs, speeds: [0.5, 0.5], rate: 6.5 })
+  assert.ok(tick(1000).events.bossAttack === undefined)
+  const first = tick(BOSS_ATTACK_EVERY_MS + 1)
+  assert.equal(first.events.bossAttack, BOSS_ATTACK_DAMAGE_START)
+  const second = tick(BOSS_ATTACK_EVERY_MS * 2 + 1)
+  assert.equal(second.events.bossAttack, BOSS_ATTACK_DAMAGE_START + BOSS_ATTACK_DAMAGE_GROWTH)
+  assert.ok(bossCharge(s, BOSS_ATTACK_EVERY_MS * 2 + 1) < 5, 'charge resets after an attack')
+  assert.ok(bossCharge(s, BOSS_ATTACK_EVERY_MS * 3) > 95, 'charge full right before the next')
+  // Team fill combines both players.
+  const fill = tick(BOSS_ATTACK_EVERY_MS * 2 + 500)
+  assert.ok(fill.fill[0] > 0 && fill.fill[1] === 0)
+})
+
+ok('overtime tie detection honors the epsilon', () => {
+  assert.equal(isOvertimeTie(70, 70), true)
+  assert.equal(isOvertimeTie(70, 71.4), true)
+  assert.equal(isOvertimeTie(70, 71.6), false)
 })
 
 console.log(`\n${passed} checks passed`)

@@ -62,6 +62,23 @@ class SoundFX {
     this.tone({ freq: 780, type: 'triangle', duration: 0.18, gain: 0.16, delay: 0.1 })
   }
 
+  /** Rhythm metronome tick — short and dry so it reads as a beat, not a melody. */
+  tick(): void {
+    this.tone({ freq: 1560, type: 'square', duration: 0.045, gain: 0.12 })
+  }
+
+  /** Boss attack: low angry glide + a thump. */
+  roar(): void {
+    this.tone({ freq: 140, type: 'sawtooth', duration: 0.5, gain: 0.22, glideTo: 70 })
+    this.tone({ freq: 60, type: 'sine', duration: 0.35, gain: 0.25 })
+  }
+
+  /** Overtime! Two urgent rising notes. */
+  alert(): void {
+    this.tone({ freq: 660, type: 'square', duration: 0.14, gain: 0.16 })
+    this.tone({ freq: 990, type: 'square', duration: 0.22, gain: 0.16, delay: 0.16 })
+  }
+
   /** Combo tier reached: quick rising blip, pitched higher for bigger tiers. */
   comboUp(mult: number): void {
     const base = mult >= 2 ? 880 : mult >= 1.5 ? 740 : 620

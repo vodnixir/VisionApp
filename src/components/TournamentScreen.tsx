@@ -1,6 +1,7 @@
 import { ArrowLeft, Play, Trophy, Users } from 'lucide-react'
 import { useState } from 'react'
 import { MAX_ENTRANTS, MIN_ENTRANTS, champion, nextMatch, type Tournament } from '../bracket'
+import { FREE_BRACKET_MAX } from '../pro'
 import { useI18n } from '../i18n'
 import { loadProfiles } from '../storage'
 import { PLAYER_COLORS, type PlayerSlot } from '../types'
@@ -115,7 +116,14 @@ function EntrantPicker({
           )
         })}
       </div>
-      <p className="text-xs text-slate-600">{t('tour.selected', { n: selected.length })}</p>
+      <p className="text-xs text-slate-600">
+        {t('tour.selected', { n: selected.length })}
+        {selected.length > FREE_BRACKET_MAX && (
+          <span className="ml-2 rounded bg-neon-yellow/20 px-1 py-px text-[9px] font-black tracking-wider text-neon-yellow">
+            PRO
+          </span>
+        )}
+      </p>
       <button
         type="button"
         onClick={start}

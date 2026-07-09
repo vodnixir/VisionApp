@@ -1,26 +1,43 @@
 import {
+  Activity,
   ArrowLeft,
   Camera,
   Flame,
   FlipHorizontal2,
+  Music,
+  Skull,
+  Smile,
   Snowflake,
+  Swords,
+  TrafficCone,
   Volume2,
   VolumeX,
   Zap,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
+import { isProMode } from '../pro'
 import { loadProfiles } from '../storage'
 import {
   HANDICAP_STEPS,
+  MATCH_MODES,
   PLAYER_COLORS,
   ROUND_DURATION_MS,
   ROUND_MODES,
   mirrorDefaultForLabel,
   type GameSettings,
+  type MatchMode,
   type PlayerProfile,
   type PlayerSlot,
 } from '../types'
+
+const MODE_ICONS: Record<MatchMode, React.ReactNode> = {
+  classic: <Swords className="size-4" aria-hidden />,
+  rhythm: <Music className="size-4" aria-hidden />,
+  endurance: <Activity className="size-4" aria-hidden />,
+  traffic: <TrafficCone className="size-4" aria-hidden />,
+  boss: <Skull className="size-4" aria-hidden />,
+}
 
 interface Props {
   settings: GameSettings
@@ -84,6 +101,7 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
               otherSlot={settings.players[i === 0 ? 1 : 0]}
               profiles={profiles}
               handicap={settings.handicap[i]}
+              showHandicap={settings.matchMode !== 'boss'}
               onSlot={(slot) => onSetPlayer(i, slot)}
               onHandicap={(value) => {
                 const handicap = [...settings.handicap] as [number, number]
@@ -92,6 +110,35 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
               }}
             />
           ))}
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p className="mb-3 text-xs font-semibold tracking-[0.2em] text-slate-500">
+            {t('setup.mode').toUpperCase()}
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {MATCH_MODES.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => onPatch({ matchMode: mode })}
+                className={`relative rounded-xl border px-2.5 py-2.5 text-left transition-all ${
+                  settings.matchMode === mode
+                    ? 'border-neon-blue bg-neon-blue/10 text-neon-blue'
+                    : 'border-white/10 text-slate-400 hover:border-white/25'
+                }`}
+              >
+                <span className="flex items-center gap-1.5 text-sm font-bold">
+                  {MODE_ICONS[mode]}
+                  {t(`gmode.${mode}`)}
+                  {isProMode(mode) && <ProBadge />}
+                </span>
+                <span className="mt-0.5 block text-[10px] leading-tight opacity-70">
+                  {t(`gmode.${mode}Hint`)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -150,19 +197,31 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
         )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {settings.matchMode === 'classic' && (
+            <Toggle
+              active={settings.comboMode}
+              onClick={() => onPatch({ comboMode: !settings.comboMode })}
+              icon={<Flame className="size-4" aria-hidden />}
+              label={t('setup.combo')}
+              onLabel={t('common.on')}
+              offLabel={t('common.off')}
+            />
+          )}
+          {settings.matchMode === 'classic' && (
+            <Toggle
+              active={settings.freezeMode}
+              onClick={() => onPatch({ freezeMode: !settings.freezeMode })}
+              icon={<Snowflake className="size-4" aria-hidden />}
+              label={t('setup.freeze')}
+              onLabel={t('common.on')}
+              offLabel={t('common.off')}
+            />
+          )}
           <Toggle
-            active={settings.comboMode}
-            onClick={() => onPatch({ comboMode: !settings.comboMode })}
-            icon={<Flame className="size-4" aria-hidden />}
-            label={t('setup.combo')}
-            onLabel={t('common.on')}
-            offLabel={t('common.off')}
-          />
-          <Toggle
-            active={settings.freezeMode}
-            onClick={() => onPatch({ freezeMode: !settings.freezeMode })}
-            icon={<Snowflake className="size-4" aria-hidden />}
-            label={t('setup.freeze')}
+            active={settings.maskMode}
+            onClick={() => onPatch({ maskMode: !settings.maskMode })}
+            icon={<Smile className="size-4" aria-hidden />}
+            label={t('setup.mask')}
             onLabel={t('common.on')}
             offLabel={t('common.off')}
           />
@@ -205,12 +264,22 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
   )
 }
 
+/** Tiny "this will be paid later" marker — features stay unlocked for now. */
+function ProBadge() {
+  return (
+    <span className="rounded bg-neon-yellow/20 px-1 py-px text-[9px] font-black tracking-wider text-neon-yellow">
+      PRO
+    </span>
+  )
+}
+
 function PlayerPicker({
   index,
   slot,
   otherSlot,
   profiles,
   handicap,
+  showHandicap,
   onSlot,
   onHandicap,
 }: {
@@ -219,6 +288,7 @@ function PlayerPicker({
   otherSlot: PlayerSlot
   profiles: PlayerProfile[]
   handicap: number
+  showHandicap: boolean
   onSlot: (slot: PlayerSlot) => void
   onHandicap: (value: number) => void
 }) {
@@ -263,25 +333,29 @@ function PlayerPicker({
         </div>
       )}
 
-      <p className="mb-1.5 text-[11px] font-semibold tracking-[0.15em] text-slate-500">
-        {t('setup.handicap').toUpperCase()}
-      </p>
-      <div className="flex gap-1.5">
-        {HANDICAP_STEPS.map((step) => (
-          <button
-            key={step}
-            type="button"
-            onClick={() => onHandicap(step)}
-            className={`flex-1 rounded-lg border px-1 py-1.5 text-xs font-bold transition-all ${
-              handicap === step
-                ? 'border-white/50 bg-white/15 text-white'
-                : 'border-white/10 text-slate-500 hover:border-white/25'
-            }`}
-          >
-            {step === 0 ? t('common.none') : `+${step}%`}
-          </button>
-        ))}
-      </div>
+      {showHandicap && (
+        <>
+          <p className="mb-1.5 text-[11px] font-semibold tracking-[0.15em] text-slate-500">
+            {t('setup.handicap').toUpperCase()}
+          </p>
+          <div className="flex gap-1.5">
+            {HANDICAP_STEPS.map((step) => (
+              <button
+                key={step}
+                type="button"
+                onClick={() => onHandicap(step)}
+                className={`flex-1 rounded-lg border px-1 py-1.5 text-xs font-bold transition-all ${
+                  handicap === step
+                    ? 'border-white/50 bg-white/15 text-white'
+                    : 'border-white/10 text-slate-500 hover:border-white/25'
+                }`}
+              >
+                {step === 0 ? t('common.none') : `+${step}%`}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

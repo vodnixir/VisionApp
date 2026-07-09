@@ -42,6 +42,28 @@ export const FILL_RATE: Record<RoundMode, number> = {
 /** Head-start options for the weaker player, in bar percent. */
 export const HANDICAP_STEPS = [0, 10, 20, 30] as const
 
+/**
+ * Game modes (how movement turns into progress). Round length (RoundMode)
+ * composes with any of them.
+ */
+export type MatchMode = 'classic' | 'rhythm' | 'endurance' | 'traffic' | 'boss'
+
+export const MATCH_MODES: MatchMode[] = ['classic', 'rhythm', 'endurance', 'traffic', 'boss']
+
+/* ---------------- Overtime (near-tie at the buzzer) ---------------- */
+
+/** Bars closer than this (percent) when time runs out → overtime. */
+export const OVERTIME_TIE_EPS = 1.5
+/** Sudden death: first player to gain this much over their buzzer score wins. */
+export const OVERTIME_DELTA = 5
+/** Safety cap — if nobody scores the delta, the higher bar takes it. */
+export const OVERTIME_MAX_MS = 20_000
+
+/** True when the buzzer result is too close to call fairly. */
+export function isOvertimeTie(p0: number, p1: number): boolean {
+  return Math.abs(p0 - p1) < OVERTIME_TIE_EPS
+}
+
 /** A roster entry, persisted locally on the device. */
 export interface PlayerProfile {
   id: string
@@ -62,6 +84,8 @@ export interface PlayerSlot {
 export interface GameSettings {
   players: [PlayerSlot, PlayerSlot]
   roundMode: RoundMode
+  /** How movement scores: classic race, rhythm, endurance, traffic light, co-op boss. */
+  matchMode: MatchMode
   /** Head start per player (bar percent, 0..30). */
   handicap: [number, number]
   /** Progress needed to win (percent). */
@@ -74,6 +98,8 @@ export interface GameSettings {
   mirrorMode: boolean
   /** Chosen camera deviceId; null = default front camera. */
   cameraId: string | null
+  /** Draw fun masks over the kids' faces (privacy for shared clips). */
+  maskMode: boolean
   soundEnabled: boolean
 }
 
@@ -83,12 +109,14 @@ export const DEFAULT_SETTINGS: GameSettings = {
     { profileId: null, name: '' },
   ],
   roundMode: 'fight',
+  matchMode: 'classic',
   handicap: [0, 0],
   targetScore: 100,
   freezeMode: false,
   comboMode: true,
   mirrorMode: true,
   cameraId: null,
+  maskMode: false,
   soundEnabled: true,
 }
 
@@ -192,6 +220,7 @@ export interface MatchResults {
   winnerName: string
   durationMs: number
   roundMode: RoundMode
+  matchMode: MatchMode
   /** True when the clock ran out (winner decided by higher bar). */
   endedByTimer: boolean
   players: [PlayerResult, PlayerResult]
