@@ -22,7 +22,7 @@ export const PORTRAIT_H = 1920
 /** Composition rate; matches captureStream(30) so no frames are wasted. */
 const COMPOSE_FPS = 30
 /** Same face as the canvas HUD (draw.ts) so the clip reads as one product. */
-const BRAND_FONT = "Orbitron, 'Segoe UI', system-ui, sans-serif"
+const BRAND_FONT = "'Segoe UI', system-ui, -apple-system, Roboto, sans-serif"
 
 /** Centered crop of an sw×sh source that covers the given aspect (w/h). */
 export function coverCrop(
@@ -131,13 +131,13 @@ class PortraitComposer {
     if (fg.y > 170 && PORTRAIT_H - (fg.y + fg.h) > 170) {
       ctx.save()
       ctx.textAlign = 'center'
-      ctx.font = `900 64px ${BRAND_FONT}`
+      ctx.font = `700 64px ${BRAND_FONT}`
       ctx.fillStyle = '#ffffff'
-      ctx.shadowColor = 'rgba(0, 195, 255, 0.8)'
-      ctx.shadowBlur = 24
-      ctx.fillText('SPEED BATTLE', PORTRAIT_W / 2, fg.y - 64)
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
+      ctx.shadowBlur = 12
+      ctx.fillText('Speed Battle', PORTRAIT_W / 2, fg.y - 64)
       ctx.shadowBlur = 0
-      ctx.font = `700 40px ${BRAND_FONT}`
+      ctx.font = `600 40px ${BRAND_FONT}`
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)'
       ctx.fillText('#SpeedBattleDuel', PORTRAIT_W / 2, fg.y + fg.h + 92)
       ctx.restore()

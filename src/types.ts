@@ -166,13 +166,13 @@ export interface Belt {
 
 /** Ascending thresholds; beltFor() picks the highest reached. */
 export const BELTS: Belt[] = [
-  { key: 'white', minWins: 0, color: '#f1f5f9' },
-  { key: 'yellow', minWins: 2, color: '#ffe600' },
-  { key: 'orange', minWins: 5, color: '#ff9f1a' },
-  { key: 'green', minWins: 9, color: '#39ff88' },
-  { key: 'blue', minWins: 14, color: '#00c3ff' },
-  { key: 'red', minWins: 20, color: '#ff2e63' },
-  { key: 'black', minWins: 30, color: '#111318' },
+  { key: 'white', minWins: 0, color: '#ffffff' },
+  { key: 'yellow', minWins: 2, color: '#eab308' },
+  { key: 'orange', minWins: 5, color: '#f97316' },
+  { key: 'green', minWins: 9, color: '#22c55e' },
+  { key: 'blue', minWins: 14, color: '#3b82f6' },
+  { key: 'red', minWins: 20, color: '#ef4444' },
+  { key: 'black', minWins: 30, color: '#18181b' },
 ]
 
 export function beltFor(wins: number): Belt {
@@ -226,4 +226,8 @@ export interface MatchResults {
   players: [PlayerResult, PlayerResult]
 }
 
-export const PLAYER_COLORS = ['#00c3ff', '#ff2e63'] as const
+/** Player identity on the CANVAS (over live video) — bright enough to read on any footage. */
+export const PLAYER_COLORS = ['#3b82f6', '#ef4444'] as const
+
+/** Player identity on LIGHT surfaces (menus, results) — one step deeper for contrast on white. */
+export const PLAYER_COLORS_UI = ['#2563eb', '#dc2626'] as const

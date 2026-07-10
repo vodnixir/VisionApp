@@ -59,7 +59,7 @@ export function ShowScreen() {
   }, [hasStream, t])
 
   return (
-    <div className="absolute inset-0 bg-arena-950">
+    <div className="absolute inset-0 bg-black">
       <video
         ref={videoRef}
         playsInline
@@ -75,7 +75,7 @@ export function ShowScreen() {
   )
 }
 
-const FONT = "Orbitron, 'Segoe UI', system-ui, sans-serif"
+const FONT = "'Segoe UI', system-ui, -apple-system, Roboto, sans-serif"
 
 /** Exported for smoke tests; the component drives it via rAF. */
 export function drawScoreboard(
@@ -83,11 +83,8 @@ export function drawScoreboard(
   state: ShowState | null,
   waitingText: string,
 ): void {
-  // Backdrop: dark arena gradient.
-  const g = ctx.createLinearGradient(0, 0, 0, H)
-  g.addColorStop(0, '#0b1226')
-  g.addColorStop(1, '#05060f')
-  ctx.fillStyle = g
+  // Backdrop: the same warm paper as the phone menus — one system everywhere.
+  ctx.fillStyle = '#f7f7f5'
   ctx.fillRect(0, 0, W, H)
 
   const phase = state?.phase ?? 'idle'
@@ -96,21 +93,16 @@ export function drawScoreboard(
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.font = `900 ${Math.round(H * 0.11)}px ${FONT}`
-    ctx.fillStyle = '#00c3ff'
-    ctx.shadowColor = '#00c3ff'
-    ctx.shadowBlur = 24
-    ctx.fillText('SPEED', W / 2 - H * 0.19, H * 0.42)
-    ctx.fillStyle = '#ffffff'
-    ctx.shadowBlur = 0
-    ctx.fillText('BATTLE', W / 2 + H * 0.21, H * 0.42)
-    ctx.font = `600 ${Math.round(H * 0.038)}px ${FONT}`
-    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    ctx.font = `700 ${Math.round(H * 0.1)}px ${FONT}`
+    ctx.fillStyle = '#18181b'
+    ctx.fillText('Speed Battle', W / 2, H * 0.42)
+    ctx.font = `500 ${Math.round(H * 0.038)}px ${FONT}`
+    ctx.fillStyle = 'rgba(24,24,27,0.5)'
     const line =
       phase === 'calibration' && state
-        ? `${state.names[0].toUpperCase()}  VS  ${state.names[1].toUpperCase()}`
+        ? `${state.names[0]}  ·  ${state.names[1]}`
         : waitingText
-    ctx.fillText(line, W / 2, H * 0.58)
+    ctx.fillText(line, W / 2, H * 0.56)
     ctx.restore()
     return
   }
@@ -127,17 +119,14 @@ export function drawScoreboard(
   drawMatchHud(ctx, W, H, state.hud, state.names)
   ctx.save()
   ctx.textBaseline = 'middle'
-  ctx.font = `900 ${Math.round(H * 0.3)}px ${FONT}`
+  ctx.font = `700 ${Math.round(H * 0.3)}px ${FONT}`
   for (const i of [0, 1] as const) {
     ctx.fillStyle = PLAYER_COLORS[i]
-    ctx.shadowColor = PLAYER_COLORS[i]
-    ctx.shadowBlur = 30
     ctx.textAlign = 'center'
     ctx.fillText(`${Math.floor(state.hud.progress[i])}`, W * (i === 0 ? 0.27 : 0.73), H * 0.58)
   }
-  ctx.font = `700 ${Math.round(H * 0.07)}px ${FONT}`
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'
-  ctx.shadowBlur = 0
+  ctx.font = `600 ${Math.round(H * 0.07)}px ${FONT}`
+  ctx.fillStyle = 'rgba(24,24,27,0.35)'
   ctx.fillText('VS', W / 2, H * 0.58)
   ctx.restore()
 }

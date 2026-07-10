@@ -676,7 +676,7 @@ export default function App() {
   const settings = game.settings
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-arena-950">
+    <div className="relative h-full w-full overflow-hidden bg-black">
       {/* Hidden source video; everything visible is drawn onto the canvas. */}
       <video ref={videoRef} className="hidden" playsInline muted />
       <canvas ref={canvasRef} className={`h-full w-full object-contain ${inArena ? '' : 'hidden'}`} />
