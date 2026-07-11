@@ -204,6 +204,18 @@ export function HomeScreen({
           </div>
 
           <p className="text-center text-xs text-t3">{t('home.footer')}</p>
+
+          {/* Experimental single-player runner — a hidden #runner spike for now. */}
+          <button
+            type="button"
+            onClick={() => {
+              window.location.hash = 'runner'
+              window.location.reload()
+            }}
+            className="text-xs text-t3 underline decoration-dotted underline-offset-4 hover:text-t2"
+          >
+            🏃 Бегун · соло (бета)
+          </button>
         </div>
       </div>
     </div>
