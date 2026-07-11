@@ -35,6 +35,14 @@ import {
   type KpMap,
   type SlotAnchor,
 } from '../src/cv/tracking'
+import {
+  DEFAULT_GESTURE_CONFIG,
+  averageNeutral,
+  createGestureState,
+  detectGesture,
+  type Neutral,
+  type PostureSample,
+} from '../src/runner/gestures'
 
 let passed = 0
 function ok(name: string, fn: () => void): void {
@@ -341,6 +349,77 @@ ok('overtime tie detection honors the epsilon', () => {
   assert.equal(isOvertimeTie(70, 70), true)
   assert.equal(isOvertimeTie(70, 71.4), true)
   assert.equal(isOvertimeTie(70, 71.6), false)
+})
+
+console.log('runner gestures')
+
+const NEUTRAL: Neutral = { centerX: 640, hipY: 400, reach: 200, scale: 100 }
+const mkSample = (over: Partial<PostureSample>): PostureSample => ({
+  centerX: 640,
+  hipY: 400,
+  topY: 200,
+  scale: 100,
+  t: 0,
+  ...over,
+})
+
+ok('averageNeutral means the samples; empty → null', () => {
+  assert.equal(averageNeutral([]), null)
+  const n = averageNeutral([
+    mkSample({ centerX: 600, hipY: 390, topY: 190 }),
+    mkSample({ centerX: 620, hipY: 410, topY: 210 }),
+  ])
+  assert.ok(n)
+  assert.equal(n.centerX, 610)
+  assert.equal(n.hipY, 400)
+  assert.equal(n.reach, 200)
+})
+
+ok('lane: crosses on the enter threshold, holds through the hysteresis gap', () => {
+  const s = createGestureState()
+  assert.equal(detectGesture(s, mkSample({ t: 0 }), NEUTRAL, DEFAULT_GESTURE_CONFIG).lane, 0)
+  // Step right past enter (0.6 × 100 = 60 px) → lane 1, a change event.
+  const r1 = detectGesture(s, mkSample({ centerX: 720, t: 33 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(r1.lane, 1)
+  assert.ok(r1.laneChanged)
+  // Drift back into the gap (offset 0.5, between exit 0.35 and enter 0.6) → holds.
+  const r2 = detectGesture(s, mkSample({ centerX: 690, t: 66 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(r2.lane, 1)
+  assert.equal(r2.laneChanged, false)
+  // Back near center (offset 0.2 < exit) → center again.
+  const r3 = detectGesture(s, mkSample({ centerX: 660, t: 99 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(r3.lane, 0)
+  assert.ok(r3.laneChanged)
+})
+
+ok('crouch: fires when the body shortens top-to-hip past the ratio', () => {
+  const s = createGestureState()
+  const standing = detectGesture(s, mkSample({ t: 0 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(standing.crouch, false)
+  assert.ok(Math.abs(standing.reachRatio - 1) < 1e-9)
+  // Head drops toward the hips: reach 140 / 200 = 0.7 < 0.78.
+  const crouch = detectGesture(s, mkSample({ topY: 260, t: 33 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.ok(crouch.crouch)
+  assert.ok(crouch.crouchAmount > 0)
+})
+
+ok('jump: a fast hip rise fires once (cooldown blocks repeats); a slow rise does not', () => {
+  const s = createGestureState()
+  detectGesture(s, mkSample({ hipY: 400, t: 0 }), NEUTRAL, DEFAULT_GESTURE_CONFIG) // seed prev
+  const up = detectGesture(s, mkSample({ hipY: 340, t: 33 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.ok(up.jump, 'sharp upward hip motion = jump')
+  const again = detectGesture(s, mkSample({ hipY: 280, t: 66 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(again.jump, false, 'no second jump inside the cooldown')
+
+  const slow = createGestureState()
+  detectGesture(slow, mkSample({ hipY: 400, t: 0 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  const drift = detectGesture(slow, mkSample({ hipY: 397, t: 33 }), NEUTRAL, DEFAULT_GESTURE_CONFIG)
+  assert.equal(drift.jump, false, 'gentle sway is not a jump')
+})
+
+ok('no jump on the very first frame (no previous sample)', () => {
+  const s = createGestureState()
+  assert.equal(detectGesture(s, mkSample({ hipY: 100 }), NEUTRAL, DEFAULT_GESTURE_CONFIG).jump, false)
 })
 
 console.log(`\n${passed} checks passed`)

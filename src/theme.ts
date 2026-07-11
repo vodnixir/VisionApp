@@ -135,7 +135,9 @@ let currentTheme: ThemeId = detectTheme()
 const listeners = new Set<() => void>()
 
 function apply(id: ThemeId): void {
-  document.documentElement.dataset.theme = id
+  // Guard so the module is import-safe in a non-DOM context (the Node test
+  // harness pulls this in transitively via recorder.ts → theme.ts).
+  if (typeof document !== 'undefined') document.documentElement.dataset.theme = id
 }
 apply(currentTheme)
 

@@ -15,6 +15,7 @@ import {
   roiTouchesEdge,
   selectFighters,
   type BBox,
+  type RawPosture,
 } from './tracking'
 import {
   drawBrackets,
@@ -89,6 +90,8 @@ export interface EnginePlayerFrame {
   bbox: BBox | null
   /** Smoothed activity, 0..1. */
   speed: number
+  /** Raw torso geometry for the single-player runner controls (null if unreliable). */
+  posture: RawPosture | null
 }
 
 export interface EngineFrame {
@@ -374,6 +377,7 @@ export class PoseEngine {
         visible: t.visible,
         bbox: t.bbox,
         speed: t.speed,
+        posture: t.posture,
       })) as [EnginePlayerFrame, EnginePlayerFrame]
 
       this.onFrame({

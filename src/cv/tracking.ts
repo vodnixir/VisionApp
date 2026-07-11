@@ -386,6 +386,66 @@ export function faceAnchor(pose: Pose, bbox: BBox): FaceAnchor | null {
   return { x: cx, y: cy, r: Math.max(spread * 1.8, bbox.w * 0.16) }
 }
 
+/* ---------------- Body posture (single-player runner controls) ---------------- */
+
+/**
+ * Raw body geometry for gesture control, in full-frame video pixels. The runner
+ * mode needs to know WHAT the body did (which lane, jump, crouch), not just how
+ * much it moved — so this exposes the torso landmarks the duel scorer discards.
+ * The gesture layer (src/runner/gestures.ts) normalizes these against a
+ * calibrated neutral stance, so absolute pixel scale / camera distance drop out.
+ */
+export interface RawPosture {
+  /** Mean X of the confident shoulders + hips — the lane (left/right) signal. */
+  centerX: number
+  /** Mean Y of the confident hips — the vertical (jump) signal. */
+  hipY: number
+  /** Highest confident head/shoulder Y (smallest value) — top of the body. */
+  topY: number
+  /** Shoulder span in px, or 0 when both shoulders aren't visible. */
+  shoulderWidth: number
+  /** Torso length shoulders→hips in px — the fallback normalization scale. */
+  torsoHeight: number
+}
+
+function confidentPoint(pose: Pose, name: string): Point | null {
+  const k = pose.keypoints.find((p) => p.name === name)
+  if (!k || (k.score ?? 0) < KEYPOINT_MIN_SCORE) return null
+  return { x: k.x, y: k.y }
+}
+
+const mean = (xs: number[]): number => xs.reduce((s, v) => s + v, 0) / xs.length
+
+/** Head/shoulder points that can mark the top of the body (min Y). */
+const TOP_KEYPOINTS = ['nose', 'left_eye', 'right_eye', 'left_shoulder', 'right_shoulder'] as const
+
+/**
+ * Torso landmarks for a single tracked player. Returns null unless the core is
+ * visible (≥1 shoulder AND ≥1 hip) — a half-detected body would give garbage
+ * lane/jump signals, better to report "not reliable" than to fire false events.
+ */
+export function bodyPosture(pose: Pose): RawPosture | null {
+  const ls = confidentPoint(pose, 'left_shoulder')
+  const rs = confidentPoint(pose, 'right_shoulder')
+  const lh = confidentPoint(pose, 'left_hip')
+  const rh = confidentPoint(pose, 'right_hip')
+  const shoulders = [ls, rs].filter((p): p is Point => p !== null)
+  const hips = [lh, rh].filter((p): p is Point => p !== null)
+  if (shoulders.length === 0 || hips.length === 0) return null
+
+  const shoulderY = mean(shoulders.map((p) => p.y))
+  const hipY = mean(hips.map((p) => p.y))
+  const centerX = mean([...shoulders, ...hips].map((p) => p.x))
+  const shoulderWidth = ls && rs ? Math.abs(ls.x - rs.x) : 0
+
+  let topY = shoulderY
+  for (const name of TOP_KEYPOINTS) {
+    const p = confidentPoint(pose, name)
+    if (p && p.y < topY) topY = p.y
+  }
+  return { centerX, hipY, topY, shoulderWidth, torsoHeight: Math.max(1, hipY - shoulderY) }
+}
+
 export function extractMotionKeypoints(pose: Pose): KpMap {
   const map: KpMap = new Map()
   for (const k of pose.keypoints) {
@@ -434,6 +494,8 @@ export class PlayerTracker implements SlotAnchor {
   speed = 0
   /** Smoothed head position for the privacy mask (null when no head points). */
   face: FaceAnchor | null = null
+  /** Raw torso geometry for runner gesture control (null when core not visible). */
+  posture: RawPosture | null = null
   framesSinceSeen = Infinity
   lastBBox: BBox | null = null
   lastSeenAtMs = -Infinity
@@ -480,6 +542,10 @@ export class PlayerTracker implements SlotAnchor {
         : freshFace
     }
 
+    // Torso geometry for the runner mode — computed every frame it's visible,
+    // independent of scoring (calibration reads it while the bar isn't filling).
+    this.posture = bodyPosture(candidate.pose)
+
     const kp = extractMotionKeypoints(candidate.pose)
     if (scoring && this.prevKp && consecutive && dt > 0) {
       const diag = Math.hypot(this.bbox.w, this.bbox.h)
@@ -505,6 +571,7 @@ export class PlayerTracker implements SlotAnchor {
     this.bbox = null
     this.prevKp = null
     this.face = null
+    this.posture = null
     this.speed = 0
     this.framesSinceSeen = Infinity
   }
