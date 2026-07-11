@@ -18,10 +18,10 @@ import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n'
 import { isProMode } from '../pro'
 import { loadProfiles } from '../storage'
+import { playerColorsUI } from '../theme'
 import {
   HANDICAP_STEPS,
   MATCH_MODES,
-  PLAYER_COLORS_UI,
   ROUND_DURATION_MS,
   ROUND_MODES,
   mirrorDefaultForLabel,
@@ -78,18 +78,18 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
   const cameras = useCameras()
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-paper px-4 py-6">
+    <div className="screen absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-page px-4 py-6">
       <div className="flex w-full max-w-2xl flex-col gap-4">
         <header className="flex items-center gap-3">
           <button
             type="button"
             onClick={onBack}
             aria-label={t('common.back')}
-            className="rounded-xl border border-black/10 bg-white p-2 text-neutral-500 transition-colors hover:border-black/25"
+            className="rounded-xl border border-edge bg-card p-2 text-t2 transition-colors hover:border-edge2"
           >
             <ArrowLeft className="size-5" aria-hidden />
           </button>
-          <h1 className="text-lg font-semibold text-neutral-900">{t('setup.title')}</h1>
+          <h1 className="text-lg font-semibold text-t1">{t('setup.title')}</h1>
         </header>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -112,8 +112,8 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
           ))}
         </div>
 
-        <div className="rounded-2xl border border-black/10 bg-white p-4">
-          <p className="mb-3 text-xs font-medium tracking-wider text-neutral-400">
+        <div className="rounded-2xl border border-edge bg-card p-4">
+          <p className="mb-3 text-xs font-medium tracking-wider text-t3">
             {t('setup.mode').toUpperCase()}
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -124,8 +124,8 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
                 onClick={() => onPatch({ matchMode: mode })}
                 className={`relative rounded-xl border px-2.5 py-2.5 text-left transition-all ${
                   settings.matchMode === mode
-                    ? 'border-neutral-900 bg-black/5 text-neutral-900'
-                    : 'border-black/10 text-neutral-500 hover:border-black/25'
+                    ? 'border-sel bg-selbg text-sel'
+                    : 'border-edge text-t2 hover:border-edge2'
                 }`}
               >
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
@@ -141,8 +141,8 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
           </div>
         </div>
 
-        <div className="rounded-2xl border border-black/10 bg-white p-4">
-          <p className="mb-3 text-xs font-medium tracking-wider text-neutral-400">
+        <div className="rounded-2xl border border-edge bg-card p-4">
+          <p className="mb-3 text-xs font-medium tracking-wider text-t3">
             {t('setup.round').toUpperCase()}
           </p>
           <div className="grid grid-cols-3 gap-2">
@@ -153,8 +153,8 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
                 onClick={() => onPatch({ roundMode: mode })}
                 className={`rounded-xl border px-2 py-3 transition-all ${
                   settings.roundMode === mode
-                    ? 'border-neutral-900 bg-black/5 text-neutral-900'
-                    : 'border-black/10 text-neutral-500 hover:border-black/25'
+                    ? 'border-sel bg-selbg text-sel'
+                    : 'border-edge text-t2 hover:border-edge2'
                 }`}
               >
                 <span className="block text-sm font-semibold sm:text-base">{t(`mode.${mode}`)}</span>
@@ -167,8 +167,8 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
         </div>
 
         {cameras.length > 1 && (
-          <div className="rounded-2xl border border-black/10 bg-white p-4">
-            <p className="mb-3 flex items-center gap-2 text-xs font-medium tracking-wider text-neutral-400">
+          <div className="rounded-2xl border border-edge bg-card p-4">
+            <p className="mb-3 flex items-center gap-2 text-xs font-medium tracking-wider text-t3">
               <Camera className="size-4" aria-hidden />
               {t('setup.camera').toUpperCase()}
             </p>
@@ -252,13 +252,13 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
         <button
           type="button"
           onClick={onStart}
-          className="mt-1 flex items-center justify-center gap-3 rounded-2xl bg-lime-400 px-10 py-4 text-xl font-semibold text-lime-950 transition-transform active:scale-[0.98]"
+          className="mt-1 flex items-center justify-center gap-3 rounded-2xl bg-accent px-10 py-4 text-xl font-semibold text-on-accent transition-transform active:scale-[0.98]"
         >
           <Zap className="size-6" aria-hidden />
           {t('setup.start')}
         </button>
 
-        <p className="pb-2 text-center text-xs leading-relaxed text-neutral-400">{t('setup.hint')}</p>
+        <p className="pb-2 text-center text-xs leading-relaxed text-t3">{t('setup.hint')}</p>
       </div>
     </div>
   )
@@ -267,7 +267,7 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
 /** Tiny "this will be paid later" marker — features stay unlocked for now. */
 function ProBadge() {
   return (
-    <span className="rounded bg-neutral-900 px-1 py-px text-[9px] font-semibold tracking-wider text-white">
+    <span className="rounded bg-chip px-1 py-px text-[9px] font-semibold tracking-wider text-onchip">
       PRO
     </span>
   )
@@ -293,12 +293,12 @@ function PlayerPicker({
   onHandicap: (value: number) => void
 }) {
   const { t } = useI18n()
-  const color = PLAYER_COLORS_UI[index]
+  const color = playerColorsUI()[index]
   const defaultName = index === 0 ? t('setup.player1') : t('setup.player2')
 
   return (
     <div
-      className="rounded-2xl border bg-white p-4"
+      className="rounded-2xl border bg-card p-4"
       style={{ borderColor: `${color}4d` }}
     >
       <p className="mb-2 text-xs font-semibold tracking-wider" style={{ color }}>
@@ -311,7 +311,7 @@ function PlayerPicker({
         maxLength={14}
         onChange={(e) => onSlot({ profileId: null, name: e.target.value })}
         placeholder={defaultName}
-        className="mb-3 w-full rounded-xl border border-black/10 bg-black/[0.03] px-3 py-2.5 text-base font-semibold text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400"
+        className="mb-3 w-full rounded-xl border border-edge bg-card2 px-3 py-2.5 text-base font-semibold text-t1 outline-none placeholder:text-t3 focus:border-edge2"
       />
 
       {profiles.length > 0 && (
@@ -335,7 +335,7 @@ function PlayerPicker({
 
       {showHandicap && (
         <>
-          <p className="mb-1.5 text-[11px] font-medium tracking-wider text-neutral-400">
+          <p className="mb-1.5 text-[11px] font-medium tracking-wider text-t3">
             {t('setup.handicap').toUpperCase()}
           </p>
           <div className="flex gap-1.5">
@@ -346,8 +346,8 @@ function PlayerPicker({
                 onClick={() => onHandicap(step)}
                 className={`flex-1 rounded-lg border px-1 py-1.5 text-xs font-semibold transition-all ${
                   handicap === step
-                    ? 'border-neutral-900 bg-black/5 text-neutral-900'
-                    : 'border-black/10 text-neutral-400 hover:border-black/25'
+                    ? 'border-sel bg-selbg text-sel'
+                    : 'border-edge text-t3 hover:border-edge2'
                 }`}
               >
                 {step === 0 ? t('common.none') : `+${step}%`}
@@ -377,10 +377,10 @@ function Chip({
       onClick={onClick}
       className={`rounded-full border px-3 py-1 text-xs font-semibold transition-all ${
         active
-          ? 'border-neutral-900 bg-neutral-900 text-white'
+          ? 'border-chipedge bg-chip text-onchip'
           : dimmed
-            ? 'border-black/5 text-neutral-300'
-            : 'border-black/10 text-neutral-500 hover:border-black/30'
+            ? 'border-edge/50 text-t3/60'
+            : 'border-edge text-t2 hover:border-edge2'
       }`}
     >
       {label}
@@ -408,12 +408,12 @@ function Toggle({
       type="button"
       onClick={onClick}
       className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition-all ${
-        active ? 'border-neutral-900 bg-white text-neutral-900' : 'border-black/10 text-neutral-400'
+        active ? 'border-sel bg-card text-sel' : 'border-edge text-t3'
       }`}
     >
       {icon}
       {label}
-      <span className={`text-[10px] font-semibold ${active ? 'text-lime-600' : 'text-neutral-300'}`}>
+      <span className={`text-[10px] font-semibold ${active ? 'text-dot' : 'text-t3/60'}`}>
         {active ? onLabel : offLabel}
       </span>
     </button>

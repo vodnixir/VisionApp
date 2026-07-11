@@ -141,6 +141,10 @@ const en = {
   'common.on': 'ON',
   'common.off': 'OFF',
   'common.none': 'None',
+
+  'theme.light': 'Light theme',
+  'theme.dark': 'Dark theme',
+  'theme.neon': 'Neon theme',
 } as const
 
 export type I18nKey = keyof typeof en
@@ -273,6 +277,10 @@ const ru: Dict = {
   'common.on': 'ВКЛ',
   'common.off': 'ВЫКЛ',
   'common.none': 'Нет',
+
+  'theme.light': 'Светлая тема',
+  'theme.dark': 'Тёмная тема',
+  'theme.neon': 'Неоновая тема',
 }
 
 const es: Dict = {
@@ -401,6 +409,10 @@ const es: Dict = {
   'common.on': 'SÍ',
   'common.off': 'NO',
   'common.none': 'Sin',
+
+  'theme.light': 'Tema claro',
+  'theme.dark': 'Tema oscuro',
+  'theme.neon': 'Tema neón',
 }
 
 const pt: Dict = {
@@ -529,6 +541,10 @@ const pt: Dict = {
   'common.on': 'SIM',
   'common.off': 'NÃO',
   'common.none': 'Sem',
+
+  'theme.light': 'Tema claro',
+  'theme.dark': 'Tema escuro',
+  'theme.neon': 'Tema néon',
 }
 
 const DICTS: Record<Lang, Dict> = { en, ru, es, pt }

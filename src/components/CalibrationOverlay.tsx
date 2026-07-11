@@ -1,7 +1,8 @@
 import { Lightbulb, MoveHorizontal, ScanLine, UserPlus, Users } from 'lucide-react'
 import type { EngineHints } from '../cv/engine'
 import { useI18n } from '../i18n'
-import { PLAYER_COLORS_UI, type CalibrationPhase } from '../types'
+import { playerColorsUI } from '../theme'
+import type { CalibrationPhase } from '../types'
 
 interface Props {
   phase: CalibrationPhase
@@ -20,7 +21,7 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
       <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
         <span
           key={countdown}
-          className="animate-countdown-pop text-[9rem] font-bold leading-none text-white [text-shadow:0_4px_32px_rgba(0,0,0,0.5)] sm:text-[16rem]"
+          className="countdown-digit animate-countdown-pop text-[9rem] font-bold leading-none sm:text-[16rem]"
         >
           {countdown}
         </span>
@@ -31,39 +32,39 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
   const locking = phase === 'LOCKING'
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4 sm:bottom-12">
-      <div className="flex w-full max-w-md flex-col items-center gap-3 rounded-2xl bg-white/90 px-6 py-4 backdrop-blur">
+      <div className="overlay-panel flex w-full max-w-md flex-col items-center gap-3 rounded-2xl px-6 py-4">
         <div className="flex items-center gap-3">
           {locking ? (
-            <ScanLine className="size-6 text-lime-600 sm:size-8" aria-hidden />
+            <ScanLine className="size-6 text-dot sm:size-8" aria-hidden />
           ) : (
-            <Users className="size-6 animate-pulse text-neutral-500 sm:size-8" aria-hidden />
+            <Users className="size-6 animate-pulse text-t2 sm:size-8" aria-hidden />
           )}
-          <span className="text-sm font-semibold text-neutral-900 sm:text-xl">
+          <span className="text-sm font-semibold text-t1 sm:text-xl">
             {locking ? t('cal.locking') : t('cal.searching')}
           </span>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-neutral-500 sm:text-sm">
+        <div className="flex items-center gap-2 text-xs text-t2 sm:text-sm">
           <span
-            className={presentCount >= 1 ? 'font-semibold' : 'text-neutral-300'}
-            style={presentCount >= 1 ? { color: PLAYER_COLORS_UI[0] } : undefined}
+            className={presentCount >= 1 ? 'font-semibold' : 'text-t3/60'}
+            style={presentCount >= 1 ? { color: playerColorsUI()[0] } : undefined}
           >
             P1
           </span>
-          <span className="text-neutral-300">·</span>
+          <span className="text-t3/60">·</span>
           <span
-            className={presentCount >= 2 ? 'font-semibold' : 'text-neutral-300'}
-            style={presentCount >= 2 ? { color: PLAYER_COLORS_UI[1] } : undefined}
+            className={presentCount >= 2 ? 'font-semibold' : 'text-t3/60'}
+            style={presentCount >= 2 ? { color: playerColorsUI()[1] } : undefined}
           >
             P2
           </span>
-          <span className="ml-2 text-neutral-500">{t('cal.inFrame', { n: presentCount })}</span>
+          <span className="ml-2 text-t2">{t('cal.inFrame', { n: presentCount })}</span>
         </div>
 
         {locking && (
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-black/10">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-card2">
             <div
-              className="h-full rounded-full bg-lime-500 transition-[width] duration-100 ease-linear"
+              className="glow-dot h-full rounded-full bg-dot transition-[width] duration-100 ease-linear"
               style={{ width: `${Math.min(lockProgress * 100, 100)}%` }}
             />
           </div>
@@ -87,7 +88,7 @@ function QualityHint({ hints }: { hints: EngineHints }) {
         : null
   if (!hint) return null
   return (
-    <p className="flex items-center gap-2 text-xs font-medium text-neutral-600">
+    <p className="flex items-center gap-2 text-xs font-medium text-t2">
       {hint.icon}
       {hint.text}
     </p>

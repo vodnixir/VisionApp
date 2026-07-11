@@ -18,6 +18,7 @@
  * the cast button hides itself.
  */
 import type { HudState } from './cv/draw'
+import { getTheme, type ThemeId } from './theme'
 
 /* Minimal Presentation API typings — the WICG spec isn't in TS's lib.dom. */
 interface PresentationConnectionEvent {
@@ -54,6 +55,8 @@ export interface ShowState {
   hud: HudState
   names: [string, string]
   phase: ShowPhase
+  /** Host's active theme — the TV mirrors it (stamped by sendState). */
+  theme?: ThemeId
 }
 
 export type ShowMessage =
@@ -260,7 +263,7 @@ export class ShowCast {
 
   /** Throttled, trailing-edge state push — the LAST state always lands. */
   sendState(state: ShowState): void {
-    this.lastState = state
+    this.lastState = { ...state, theme: getTheme() }
     if (!this.active || this.pendingState) return
     const wait = Math.max(0, STATE_INTERVAL_MS - (performance.now() - this.lastSentAt))
     this.pendingState = setTimeout(() => {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { drawMatchHud, drawVictorySplash } from '../cv/draw'
 import { useI18n } from '../i18n'
 import { attachShowReceiver, type ShowState } from '../show'
-import { PLAYER_COLORS } from '../types'
+import { canvasTheme, playerColors, setTheme } from '../theme'
 
 /** Scoreboard canvas logical size (scaled to the TV with object-contain). */
 const W = 1280
@@ -24,6 +24,8 @@ export function ShowScreen() {
     return attachShowReceiver({
       onState: (s) => {
         stateRef.current = s
+        // Mirror the host's look without adopting it as this device's choice.
+        if (s.theme) setTheme(s.theme, { persist: false })
       },
       onStream: (stream) => {
         const video = videoRef.current
@@ -75,16 +77,23 @@ export function ShowScreen() {
   )
 }
 
-const FONT = "'Segoe UI', system-ui, -apple-system, Roboto, sans-serif"
-
 /** Exported for smoke tests; the component drives it via rAF. */
 export function drawScoreboard(
   ctx: CanvasRenderingContext2D,
   state: ShowState | null,
   waitingText: string,
 ): void {
-  // Backdrop: the same warm paper as the phone menus — one system everywhere.
-  ctx.fillStyle = '#f7f7f5'
+  const th = canvasTheme()
+
+  // Backdrop: flat in minimal themes, the arena gradient in neon.
+  if (th.board.bg[0] === th.board.bg[1]) {
+    ctx.fillStyle = th.board.bg[0]
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, H)
+    g.addColorStop(0, th.board.bg[0])
+    g.addColorStop(1, th.board.bg[1])
+    ctx.fillStyle = g
+  }
   ctx.fillRect(0, 0, W, H)
 
   const phase = state?.phase ?? 'idle'
@@ -93,16 +102,30 @@ export function drawScoreboard(
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.font = `700 ${Math.round(H * 0.1)}px ${FONT}`
-    ctx.fillStyle = '#18181b'
-    ctx.fillText('Speed Battle', W / 2, H * 0.42)
-    ctx.font = `500 ${Math.round(H * 0.038)}px ${FONT}`
-    ctx.fillStyle = 'rgba(24,24,27,0.5)'
+    if (th.glow) {
+      // The original two-tone arcade wordmark.
+      ctx.font = `900 ${Math.round(H * 0.11)}px ${th.font}`
+      ctx.fillStyle = '#00c3ff'
+      ctx.shadowColor = '#00c3ff'
+      ctx.shadowBlur = 24
+      ctx.fillText('SPEED', W / 2 - H * 0.19, H * 0.42)
+      ctx.fillStyle = '#ffffff'
+      ctx.shadowBlur = 0
+      ctx.fillText('BATTLE', W / 2 + H * 0.21, H * 0.42)
+    } else {
+      ctx.font = `700 ${Math.round(H * 0.1)}px ${th.font}`
+      ctx.fillStyle = th.board.ink
+      ctx.fillText('Speed Battle', W / 2, H * 0.42)
+    }
+    ctx.font = `${th.glow ? 600 : 500} ${Math.round(H * 0.038)}px ${th.font}`
+    ctx.fillStyle = th.board.muted
     const line =
       phase === 'calibration' && state
-        ? `${state.names[0]}  ·  ${state.names[1]}`
+        ? th.glow
+          ? `${state.names[0].toUpperCase()}  VS  ${state.names[1].toUpperCase()}`
+          : `${state.names[0]}  ·  ${state.names[1]}`
         : waitingText
-    ctx.fillText(line, W / 2, H * 0.56)
+    ctx.fillText(line, W / 2, th.glow ? H * 0.58 : H * 0.56)
     ctx.restore()
     return
   }
@@ -119,14 +142,19 @@ export function drawScoreboard(
   drawMatchHud(ctx, W, H, state.hud, state.names)
   ctx.save()
   ctx.textBaseline = 'middle'
-  ctx.font = `700 ${Math.round(H * 0.3)}px ${FONT}`
+  ctx.font = `${th.glow ? 900 : 700} ${Math.round(H * 0.3)}px ${th.font}`
   for (const i of [0, 1] as const) {
-    ctx.fillStyle = PLAYER_COLORS[i]
+    ctx.fillStyle = playerColors()[i]
+    if (th.glow) {
+      ctx.shadowColor = playerColors()[i]
+      ctx.shadowBlur = 30
+    }
     ctx.textAlign = 'center'
     ctx.fillText(`${Math.floor(state.hud.progress[i])}`, W * (i === 0 ? 0.27 : 0.73), H * 0.58)
   }
-  ctx.font = `600 ${Math.round(H * 0.07)}px ${FONT}`
-  ctx.fillStyle = 'rgba(24,24,27,0.35)'
+  ctx.font = `${th.glow ? 700 : 600} ${Math.round(H * 0.07)}px ${th.font}`
+  ctx.fillStyle = th.board.vs
+  ctx.shadowBlur = 0
   ctx.fillText('VS', W / 2, H * 0.58)
   ctx.restore()
 }

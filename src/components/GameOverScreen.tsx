@@ -2,8 +2,8 @@ import { Flame, Gauge, Home, RotateCcw, Share2, Trophy, Users, Zap } from 'lucid
 import { useState } from 'react'
 import { useI18n } from '../i18n'
 import { shareClip, type MatchClip } from '../recorder'
+import { playerColorsUI } from '../theme'
 import type { MatchResults } from '../types'
-import { PLAYER_COLORS_UI } from '../types'
 
 interface Props {
   results: MatchResults
@@ -29,7 +29,7 @@ export function GameOverScreen({
 }: Props) {
   const { t } = useI18n()
   const [sharing, setSharing] = useState(false)
-  const winnerColor = PLAYER_COLORS_UI[results.winnerIndex]
+  const winnerColor = playerColorsUI()[results.winnerIndex]
 
   const handleShare = async () => {
     if (!clip || sharing) return
@@ -42,10 +42,10 @@ export function GameOverScreen({
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-paper/85 px-4 backdrop-blur-sm">
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-scrim px-4 backdrop-blur-sm">
       <div className="animate-winner-flash flex flex-col items-center gap-1">
-        <Trophy className="size-12 text-amber-500 sm:size-16" aria-hidden />
-        <p className="text-xs font-medium tracking-wider text-neutral-500">
+        <Trophy className="size-12 text-gold sm:size-16" aria-hidden />
+        <p className="text-xs font-medium tracking-wider text-t2">
           {t('over.winner').toUpperCase()}
         </p>
         <h2
@@ -55,7 +55,7 @@ export function GameOverScreen({
           {results.winnerName}
         </h2>
         {results.endedByTimer && (
-          <p className="text-xs font-medium text-neutral-500">{t('over.byTimer')}</p>
+          <p className="text-xs font-medium text-t2">{t('over.byTimer')}</p>
         )}
       </div>
 
@@ -63,14 +63,14 @@ export function GameOverScreen({
         {results.players.map((p, i) => (
           <div
             key={i}
-            className={`rounded-2xl border bg-white p-3 sm:p-4 ${
+            className={`rounded-2xl border bg-card p-3 sm:p-4 ${
               i === results.winnerIndex ? '' : 'opacity-70'
             }`}
-            style={{ borderColor: `${PLAYER_COLORS_UI[i]}4d` }}
+            style={{ borderColor: `${playerColorsUI()[i]}4d` }}
           >
             <p
               className="mb-1.5 truncate text-sm font-semibold sm:text-lg"
-              style={{ color: PLAYER_COLORS_UI[i] }}
+              style={{ color: playerColorsUI()[i] }}
             >
               {p.name}
             </p>
@@ -105,7 +105,7 @@ export function GameOverScreen({
           type="button"
           onClick={handleShare}
           disabled={sharing}
-          className="flex items-center gap-2 rounded-xl border border-black/10 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-700 transition-all hover:border-black/25 disabled:opacity-50"
+          className="flex items-center gap-2 rounded-xl border border-edge bg-card px-5 py-2.5 text-sm font-semibold text-t2 transition-all hover:border-edge2 disabled:opacity-50"
         >
           <Share2 className="size-4" aria-hidden />
           {t('over.share')}
@@ -117,7 +117,7 @@ export function GameOverScreen({
           <button
             type="button"
             onClick={onContinueTournament}
-            className="flex items-center justify-center gap-2.5 rounded-2xl bg-lime-400 px-8 py-4 text-xl font-semibold text-lime-950 transition-transform active:scale-[0.98]"
+            className="flex items-center justify-center gap-2.5 rounded-2xl bg-accent px-8 py-4 text-xl font-semibold text-on-accent transition-transform active:scale-[0.98]"
           >
             <Trophy className="size-6" aria-hidden />
             {t('over.continueTour')}
@@ -126,7 +126,7 @@ export function GameOverScreen({
           <button
             type="button"
             onClick={onNext}
-            className="flex items-center justify-center gap-2.5 rounded-2xl bg-lime-400 px-8 py-4 text-xl font-semibold text-lime-950 transition-transform active:scale-[0.98]"
+            className="flex items-center justify-center gap-2.5 rounded-2xl bg-accent px-8 py-4 text-xl font-semibold text-on-accent transition-transform active:scale-[0.98]"
           >
             <RotateCcw className="size-6" aria-hidden />
             {t('over.next')}
@@ -137,7 +137,7 @@ export function GameOverScreen({
             <button
               type="button"
               onClick={onNext}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 transition-colors hover:border-black/25"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-edge bg-card px-4 py-3 text-sm font-semibold text-t2 transition-colors hover:border-edge2"
             >
               <RotateCcw className="size-4" aria-hidden />
               {t('over.replay')}
@@ -146,7 +146,7 @@ export function GameOverScreen({
             <button
               type="button"
               onClick={onChangePlayers}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 transition-colors hover:border-black/25"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-edge bg-card px-4 py-3 text-sm font-semibold text-t2 transition-colors hover:border-edge2"
             >
               <Users className="size-4" aria-hidden />
               {t('over.change')}
@@ -155,7 +155,7 @@ export function GameOverScreen({
           <button
             type="button"
             onClick={onHome}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-neutral-500 transition-colors hover:border-black/25"
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-edge bg-card px-4 py-3 text-sm font-semibold text-t2 transition-colors hover:border-edge2"
           >
             <Home className="size-4" aria-hidden />
             {t('over.home')}
@@ -168,12 +168,12 @@ export function GameOverScreen({
 
 function StatRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between border-t border-black/5 py-1.5">
-      <span className="flex items-center gap-1.5 text-[10px] text-neutral-400 sm:text-xs">
+    <div className="flex items-center justify-between border-t border-edge/60 py-1.5">
+      <span className="flex items-center gap-1.5 text-[10px] text-t3 sm:text-xs">
         {icon}
         {label.toUpperCase()}
       </span>
-      <span className="text-sm font-semibold tabular-nums text-neutral-900 sm:text-base">{value}</span>
+      <span className="text-sm font-semibold tabular-nums text-t1 sm:text-base">{value}</span>
     </div>
   )
 }

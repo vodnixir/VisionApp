@@ -226,8 +226,4 @@ export interface MatchResults {
   players: [PlayerResult, PlayerResult]
 }
 
-/** Player identity on the CANVAS (over live video) — bright enough to read on any footage. */
-export const PLAYER_COLORS = ['#3b82f6', '#ef4444'] as const
-
-/** Player identity on LIGHT surfaces (menus, results) — one step deeper for contrast on white. */
-export const PLAYER_COLORS_UI = ['#2563eb', '#dc2626'] as const
+/* Player identity colors are theme-dependent — see playerColors() / playerColorsUI() in theme.ts. */

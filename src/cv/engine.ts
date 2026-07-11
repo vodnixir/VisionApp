@@ -1,7 +1,7 @@
 import * as tf from '@tensorflow/tfjs-core'
 import '@tensorflow/tfjs-backend-webgl'
 import * as poseDetection from '@tensorflow-models/pose-detection'
-import { PLAYER_COLORS } from '../types'
+import { playerColors } from '../theme'
 import {
   FULL_SCAN_EVERY,
   PERSISTENCE_MS,
@@ -523,8 +523,8 @@ export class PoseEngine {
       const alpha = tracker.visible
         ? 1
         : Math.max(0.3, 1 - ((nowMs - tracker.lastSeenAtMs) / PERSISTENCE_MS) * 0.7)
-      drawBrackets(ctx, bbox, PLAYER_COLORS[i], { alpha, speed: tracker.speed })
-      drawLabel(ctx, config.names[i], bbox, PLAYER_COLORS[i], alpha, vw)
+      drawBrackets(ctx, bbox, playerColors()[i], { alpha, speed: tracker.speed })
+      drawLabel(ctx, config.names[i], bbox, playerColors()[i], alpha, vw)
       if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
         drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
       }
@@ -532,7 +532,7 @@ export class PoseEngine {
         const face = config.mirror
           ? { ...tracker.face, x: vw - tracker.face.x }
           : tracker.face
-        drawFaceMask(ctx, face, PLAYER_COLORS[i], Math.max(alpha, 0.9))
+        drawFaceMask(ctx, face, playerColors()[i], Math.max(alpha, 0.9))
       }
     })
 

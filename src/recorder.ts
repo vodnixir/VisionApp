@@ -10,6 +10,8 @@
  * recording falls back to the raw landscape canvas rather than producing nothing.
  */
 
+import { canvasTheme } from './theme'
+
 export interface MatchClip {
   blob: Blob
   /** File extension matching the actual container ('mp4' | 'webm'). */
@@ -21,8 +23,6 @@ export const PORTRAIT_W = 1080
 export const PORTRAIT_H = 1920
 /** Composition rate; matches captureStream(30) so no frames are wasted. */
 const COMPOSE_FPS = 30
-/** Same face as the canvas HUD (draw.ts) so the clip reads as one product. */
-const BRAND_FONT = "'Segoe UI', system-ui, -apple-system, Roboto, sans-serif"
 
 /** Centered crop of an sw×sh source that covers the given aspect (w/h). */
 export function coverCrop(
@@ -129,15 +129,17 @@ class PortraitComposer {
     // Wordmark + hashtag, only when the letterbox leaves room for them
     // (a portrait source fills the whole frame — no bands to write on).
     if (fg.y > 170 && PORTRAIT_H - (fg.y + fg.h) > 170) {
+      // Same face as the canvas HUD (theme.ts) so the clip reads as one product.
+      const th = canvasTheme()
       ctx.save()
       ctx.textAlign = 'center'
-      ctx.font = `700 64px ${BRAND_FONT}`
+      ctx.font = `${th.glow ? 900 : 700} 64px ${th.font}`
       ctx.fillStyle = '#ffffff'
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
-      ctx.shadowBlur = 12
-      ctx.fillText('Speed Battle', PORTRAIT_W / 2, fg.y - 64)
+      ctx.shadowColor = th.glow ? 'rgba(0, 195, 255, 0.8)' : 'rgba(0, 0, 0, 0.45)'
+      ctx.shadowBlur = th.glow ? 24 : 12
+      ctx.fillText(th.glow ? 'SPEED BATTLE' : 'Speed Battle', PORTRAIT_W / 2, fg.y - 64)
       ctx.shadowBlur = 0
-      ctx.font = `600 40px ${BRAND_FONT}`
+      ctx.font = `${th.glow ? 700 : 600} 40px ${th.font}`
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)'
       ctx.fillText('#SpeedBattleDuel', PORTRAIT_W / 2, fg.y + fg.h + 92)
       ctx.restore()

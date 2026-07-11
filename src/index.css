@@ -1,8 +1,117 @@
 @import 'tailwindcss';
 
-@theme {
-  /* Warm off-white page; cards are pure white with hairline borders. */
-  --color-paper: #f7f7f5;
+/* Self-hosted variable font for the NEON theme — the app must work fully
+   offline (APK build). Latin-only; body copy stays on the system stack. */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/fonts/orbitron-latin.woff2') format('woff2');
+}
+
+/* ---------------------------------------------------------------------------
+   Theme tokens. Components use only the semantic utilities generated from the
+   @theme block below; each [data-theme] swaps the raw values. Canvas rendering
+   (HUD / TV scoreboard / clip) mirrors these palettes in src/theme.ts.
+--------------------------------------------------------------------------- */
+
+:root,
+:root[data-theme='light'] {
+  --tk-page: #f7f7f5;
+  --tk-card: #ffffff;
+  --tk-card2: rgba(0, 0, 0, 0.03);
+  --tk-edge: rgba(0, 0, 0, 0.1);
+  --tk-edge2: rgba(0, 0, 0, 0.25);
+  --tk-t1: #18181b;
+  --tk-t2: #737373;
+  --tk-t3: #a3a3a3;
+  --tk-accent: #a3e635;
+  --tk-on-accent: #1a2e05;
+  --tk-dot: #65a30d;
+  --tk-sel: #171717;
+  --tk-selbg: rgba(0, 0, 0, 0.05);
+  --tk-chip: #171717;
+  --tk-onchip: #ffffff;
+  --tk-chipedge: #171717;
+  --tk-gold: #f59e0b;
+  --tk-danger: #dc2626;
+  --tk-scrim: rgba(247, 247, 245, 0.85);
+  --tk-panel: rgba(255, 255, 255, 0.9);
+  --tk-font-brand: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+}
+
+:root[data-theme='dark'] {
+  --tk-page: #0a0a0a;
+  --tk-card: #141414;
+  --tk-card2: rgba(255, 255, 255, 0.06);
+  --tk-edge: rgba(255, 255, 255, 0.1);
+  --tk-edge2: rgba(255, 255, 255, 0.3);
+  --tk-t1: #fafafa;
+  --tk-t2: rgba(255, 255, 255, 0.55);
+  --tk-t3: rgba(255, 255, 255, 0.4);
+  --tk-accent: #a3e635;
+  --tk-on-accent: #1a2e05;
+  --tk-dot: #a3e635;
+  --tk-sel: #fafafa;
+  --tk-selbg: rgba(255, 255, 255, 0.1);
+  --tk-chip: #fafafa;
+  --tk-onchip: #0a0a0a;
+  --tk-chipedge: #fafafa;
+  --tk-gold: #fbbf24;
+  --tk-danger: #f87171;
+  --tk-scrim: rgba(10, 10, 10, 0.85);
+  --tk-panel: rgba(20, 20, 20, 0.9);
+  --tk-font-brand: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+}
+
+:root[data-theme='neon'] {
+  --tk-page: #05060f;
+  --tk-card: rgba(255, 255, 255, 0.05);
+  --tk-card2: rgba(5, 6, 15, 0.7);
+  --tk-edge: rgba(255, 255, 255, 0.1);
+  --tk-edge2: rgba(255, 255, 255, 0.3);
+  --tk-t1: #ffffff;
+  --tk-t2: #94a3b8;
+  --tk-t3: #64748b;
+  --tk-accent: #39ff88;
+  --tk-on-accent: #05060f;
+  --tk-dot: #39ff88;
+  --tk-sel: #00c3ff;
+  --tk-selbg: rgba(0, 195, 255, 0.1);
+  --tk-chip: rgba(255, 255, 255, 0.2);
+  --tk-onchip: #ffffff;
+  --tk-chipedge: rgba(255, 255, 255, 0.6);
+  --tk-gold: #ffe600;
+  --tk-danger: #ff2e63;
+  --tk-scrim: rgba(5, 6, 15, 0.85);
+  --tk-panel: rgba(10, 12, 28, 0.85);
+  --tk-font-brand: Orbitron, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Semantic utilities: bg-page, bg-card, border-edge, text-t1, bg-accent … */
+@theme inline {
+  --color-page: var(--tk-page);
+  --color-card: var(--tk-card);
+  --color-card2: var(--tk-card2);
+  --color-edge: var(--tk-edge);
+  --color-edge2: var(--tk-edge2);
+  --color-t1: var(--tk-t1);
+  --color-t2: var(--tk-t2);
+  --color-t3: var(--tk-t3);
+  --color-accent: var(--tk-accent);
+  --color-on-accent: var(--tk-on-accent);
+  --color-dot: var(--tk-dot);
+  --color-sel: var(--tk-sel);
+  --color-selbg: var(--tk-selbg);
+  --color-chip: var(--tk-chip);
+  --color-onchip: var(--tk-onchip);
+  --color-chipedge: var(--tk-chipedge);
+  --color-gold: var(--tk-gold);
+  --color-danger: var(--tk-danger);
+  --color-scrim: var(--tk-scrim);
+  --color-panel: var(--tk-panel);
+  --font-brand: var(--tk-font-brand);
 }
 
 html,
@@ -10,13 +119,79 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  /* Black behind the letterboxed camera canvas; menu screens paint bg-paper. */
+  /* Black behind the letterboxed camera canvas; menu screens paint bg-page. */
   background: #000;
-  color: #18181b;
+  color: var(--tk-t1);
   font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* ---------- Theme-flavored building blocks ---------- */
+
+/* Menu screen container: the neon theme brings back its animated grid. */
+[data-theme='neon'] .screen {
+  background-image:
+    linear-gradient(rgba(70, 110, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(70, 110, 255, 0.08) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+/* Wordmark: quiet in minimal themes, full arcade in neon. */
+.brand {
+  font-weight: 600;
+}
+[data-theme='neon'] .brand {
+  font-family: var(--tk-font-brand);
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 1.25rem;
+}
+[data-theme='neon'] .brand-a {
+  color: #00c3ff;
+  text-shadow:
+    0 0 8px rgba(0, 195, 255, 0.9),
+    0 0 24px rgba(0, 195, 255, 0.5);
+}
+[data-theme='neon'] .brand-b {
+  color: #fff;
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.8),
+    0 0 20px rgba(120, 180, 255, 0.5);
+}
+
+/* Status dots glow only in neon. */
+[data-theme='neon'] .glow-dot {
+  box-shadow: 0 0 8px var(--tk-dot);
+}
+
+/* Frosted overlay panel (calibration card). */
+.overlay-panel {
+  background: var(--tk-panel);
+  backdrop-filter: blur(6px);
+}
+[data-theme='neon'] .overlay-panel {
+  border: 1px solid rgba(120, 150, 255, 0.35);
+  box-shadow:
+    0 0 18px rgba(60, 120, 255, 0.25),
+    inset 0 0 24px rgba(30, 60, 160, 0.15);
+}
+
+/* Countdown digits over the live camera picture. */
+.countdown-digit {
+  color: #fff;
+  text-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
+}
+[data-theme='neon'] .countdown-digit {
+  font-family: var(--tk-font-brand);
+  color: #ffe600;
+  text-shadow:
+    0 0 8px rgba(255, 230, 0, 0.9),
+    0 0 24px rgba(255, 230, 0, 0.5);
+}
+
+/* ---------- Animations ---------- */
 
 @keyframes countdown-pop {
   0% {
