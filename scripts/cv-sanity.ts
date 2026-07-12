@@ -43,6 +43,15 @@ import {
   type Neutral,
   type PostureSample,
 } from '../src/runner/gestures'
+import {
+  PLAYER_Z,
+  createRunnerState,
+  runnerScore,
+  stepRunner,
+  type Entity,
+  type ObstacleType,
+  type RunnerInput,
+} from '../src/runner/game'
 
 let passed = 0
 function ok(name: string, fn: () => void): void {
@@ -420,6 +429,107 @@ ok('jump: a fast hip rise fires once (cooldown blocks repeats); a slow rise does
 ok('no jump on the very first frame (no previous sample)', () => {
   const s = createGestureState()
   assert.equal(detectGesture(s, mkSample({ hipY: 100 }), NEUTRAL, DEFAULT_GESTURE_CONFIG).jump, false)
+})
+
+console.log('runner game')
+
+// Place an entity right before the player plane and disable spawns, so one step
+// pushes it across and resolves exactly that collision.
+const atPlayer = (type: ObstacleType, lane: -1 | 0 | 1): Entity => ({
+  id: 1,
+  lane,
+  z: PLAYER_Z - 0.01,
+  type,
+  resolved: false,
+})
+const runInput = (over: Partial<RunnerInput>): RunnerInput => ({
+  dt: 0.1,
+  lane: 0,
+  airborne: false,
+  crouching: false,
+  nowMs: 10_000,
+  ...over,
+})
+
+ok('coin in the player lane is collected; a miss costs nothing', () => {
+  const s = createRunnerState(() => 0)
+  s.spawnCooldownMs = 1e9
+  s.entities = [atPlayer('coin', 0)]
+  const ev = stepRunner(s, runInput({ lane: 0 }))
+  assert.ok(ev.coin)
+  assert.equal(s.coins, 1)
+  assert.equal(s.lives, 3)
+
+  const s2 = createRunnerState(() => 0)
+  s2.spawnCooldownMs = 1e9
+  s2.entities = [atPlayer('coin', 1)]
+  stepRunner(s2, runInput({ lane: 0 }))
+  assert.equal(s2.coins, 0, 'coin in another lane is simply missed')
+})
+
+ok('jump barrier: airborne clears it, grounded takes a hit', () => {
+  const air = createRunnerState(() => 0)
+  air.spawnCooldownMs = 1e9
+  air.entities = [atPlayer('jump', 0)]
+  const ev = stepRunner(air, runInput({ lane: 0, airborne: true }))
+  assert.ok(ev.dodge)
+  assert.equal(air.lives, 3)
+
+  const grounded = createRunnerState(() => 0)
+  grounded.spawnCooldownMs = 1e9
+  grounded.entities = [atPlayer('jump', 0)]
+  const ev2 = stepRunner(grounded, runInput({ lane: 0, airborne: false }))
+  assert.ok(ev2.hit)
+  assert.equal(grounded.lives, 2)
+})
+
+ok('solid block hits even if airborne — only a lane change is safe', () => {
+  const s = createRunnerState(() => 0)
+  s.spawnCooldownMs = 1e9
+  s.entities = [atPlayer('block', 0)]
+  assert.ok(stepRunner(s, runInput({ lane: 0, airborne: true, crouching: true })).hit)
+  assert.equal(s.lives, 2)
+
+  const dodged = createRunnerState(() => 0)
+  dodged.spawnCooldownMs = 1e9
+  dodged.entities = [atPlayer('block', 0)]
+  assert.equal(stepRunner(dodged, runInput({ lane: 1 })).hit, false, 'a different lane is safe')
+  assert.equal(dodged.lives, 3)
+})
+
+ok('losing the last life ends the run', () => {
+  const s = createRunnerState(() => 0)
+  s.spawnCooldownMs = 1e9
+  s.lives = 1
+  s.entities = [atPlayer('block', 0)]
+  const ev = stepRunner(s, runInput({ lane: 0 }))
+  assert.ok(ev.gameOver)
+  assert.ok(s.over)
+  assert.equal(s.lives, 0)
+})
+
+ok('mercy window absorbs a second hit right after the first', () => {
+  const s = createRunnerState(() => 0)
+  s.spawnCooldownMs = 1e9
+  s.invincibleUntil = 10_500 // still invincible at nowMs 10_000
+  s.entities = [atPlayer('jump', 0)]
+  const ev = stepRunner(s, runInput({ lane: 0, nowMs: 10_000 }))
+  assert.equal(ev.hit, false)
+  assert.equal(s.lives, 3)
+})
+
+ok('spawns fire after the cooldown; score floors distance + coin bonus', () => {
+  const s = createRunnerState(() => 0) // rng 0 → lane -1, type coin
+  const before = s.entities.length
+  stepRunner(s, runInput({ dt: 0.8 })) // 800ms > 700ms initial cooldown
+  assert.equal(s.entities.length, before + 1)
+  assert.equal(s.entities[0].type, 'coin')
+  assert.equal(s.entities[0].lane, -1)
+
+  const scored = createRunnerState(() => 0)
+  scored.distance = 123.9
+  scored.coins = 2
+  assert.equal(runnerScore(scored), Math.floor(123.9 + 2 * 5))
 })
 
 console.log(`\n${passed} checks passed`)
