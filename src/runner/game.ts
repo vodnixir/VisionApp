@@ -69,17 +69,17 @@ export const START_LIVES = 3
 export const PLAYER_Z = 0.88
 /** Past this z the entity is behind the player — despawn. */
 const REMOVE_Z = 1.15
-/** Base approach speed, z-units/sec (an entity takes ~2 s to arrive at start). */
-const BASE_APPROACH = 0.42
-/** Difficulty ramp: speed factor reaches 2× after this long. */
-const RAMP_MS = 45_000
-const MAX_FACTOR = 2.6
+/** Base approach speed, z-units/sec — gentle, so obstacles are easy to read. */
+const BASE_APPROACH = 0.32
+/** Difficulty ramp: a slow climb so early play stays relaxed. */
+const RAMP_MS = 80_000
+const MAX_FACTOR = 1.8
 /** Distance score accrued per second at 1× speed. */
 const DIST_RATE = 10
 export const COIN_BONUS = 5
-const SPAWN_BASE_MS = 1250
-const SPAWN_MIN_MS = 560
-const INVINCIBLE_MS = 1200
+const SPAWN_BASE_MS = 1600
+const SPAWN_MIN_MS = 850
+const INVINCIBLE_MS = 1300
 
 const NO_EVENTS: RunnerEvents = { hit: false, coin: false, dodge: false, gameOver: false }
 
@@ -111,9 +111,10 @@ export function runnerScore(state: RunnerState): number {
 }
 
 function pickType(r: number): ObstacleType {
-  if (r < 0.34) return 'coin'
-  if (r < 0.58) return 'jump'
-  if (r < 0.79) return 'duck'
+  // Coin-heavy, obstacles sparser — calmer, more forgiving than before.
+  if (r < 0.46) return 'coin'
+  if (r < 0.7) return 'jump'
+  if (r < 0.84) return 'duck'
   return 'block'
 }
 
