@@ -52,10 +52,17 @@ import {
   type ObstacleType,
   type RunnerInput,
 } from '../src/runner/game'
+import { mulberry32, packSignal, unpackSignal } from '../src/online/protocol'
 
 let passed = 0
 function ok(name: string, fn: () => void): void {
   fn()
+  passed++
+  console.log(`  ✓ ${name}`)
+}
+
+async function okAsync(name: string, fn: () => Promise<void>): Promise<void> {
+  await fn()
   passed++
   console.log(`  ✓ ${name}`)
 }
@@ -530,6 +537,70 @@ ok('spawns fire after the cooldown; score floors distance + coin bonus', () => {
   scored.distance = 123.9
   scored.coins = 2
   assert.equal(runnerScore(scored), Math.floor(123.9 + 2 * 5))
+})
+
+console.log('online determinism')
+
+ok('mulberry32 is deterministic, seed-sensitive, and stays in [0,1)', () => {
+  const draw = (seed: number, n: number) => {
+    const rng = mulberry32(seed)
+    return Array.from({ length: n }, () => rng())
+  }
+  const a = draw(42, 8)
+  assert.deepEqual(a, draw(42, 8), 'same seed → identical sequence')
+  assert.notDeepEqual(a, draw(43, 8), 'a different seed diverges')
+  for (const v of a) assert.ok(v >= 0 && v < 1, 'each value is a unit float')
+})
+
+ok('spawn stream ignores entity z — two phones on one seed match despite frame skew', () => {
+  // Both "phones" share the seed and the dt cadence; only phone B's world is
+  // nudged in z each frame (as a different frame rate would). The obstacle
+  // sequence must stay identical — spawning must never peek at positions.
+  const dt = 0.05
+  const runA = createRunnerState(mulberry32(0xc0ffee))
+  const runB = createRunnerState(mulberry32(0xc0ffee))
+  // Endless lives: B's nudged obstacles would otherwise cause more collisions
+  // and an earlier game over, which is a gameplay confound, not a spawn one.
+  runA.lives = Infinity
+  runB.lives = Infinity
+  const seqA: string[] = []
+  const seqB: string[] = []
+  const record = (before: number, run: typeof runA, into: string[]) => {
+    if (run.entities.length > before) {
+      const e = run.entities[run.entities.length - 1]
+      into.push(`${e.lane}:${e.type}`)
+    }
+  }
+  let now = 0
+  for (let i = 0; i < 500; i++) {
+    now += dt * 1000
+    const step = { dt, lane: 0 as const, airborne: false, crouching: false, nowMs: now }
+    const beforeA = runA.entities.length
+    stepRunner(runA, step)
+    record(beforeA, runA, seqA)
+
+    const beforeB = runB.entities.length
+    stepRunner(runB, step)
+    record(beforeB, runB, seqB)
+    for (const e of runB.entities) e.z += 0.017 // perturb B's world only
+  }
+  assert.ok(seqA.length > 8, 'several obstacles spawned over the run')
+  assert.deepEqual(seqA, seqB, 'identical obstacle sequence despite different z')
+})
+
+await okAsync('packSignal/unpackSignal round-trips offers and answers; junk is rejected', async () => {
+  for (const kind of ['offer', 'answer'] as const) {
+    const payload = {
+      kind,
+      sdp: { type: kind, sdp: `v=0\r\no=- 42 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n` },
+    }
+    const code = await packSignal(payload)
+    assert.ok(code.startsWith('g.') || code.startsWith('r.'), 'code carries its encoding prefix')
+    const back = await unpackSignal(code)
+    assert.equal(back.kind, kind)
+    assert.deepEqual(back.sdp, payload.sdp, 'the SDP survives the round-trip byte-for-byte')
+  }
+  await assert.rejects(() => unpackSignal('definitely-not-a-connection-code'))
 })
 
 console.log(`\n${passed} checks passed`)

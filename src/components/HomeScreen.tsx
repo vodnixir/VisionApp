@@ -205,17 +205,29 @@ export function HomeScreen({
 
           <p className="text-center text-xs text-t3">{t('home.footer')}</p>
 
-          {/* Experimental single-player runner — a hidden #runner spike for now. */}
-          <button
-            type="button"
-            onClick={() => {
-              window.location.hash = 'runner'
-              window.location.reload()
-            }}
-            className="text-xs text-t3 underline decoration-dotted underline-offset-4 hover:text-t2"
-          >
-            🏃 Бегун · соло (бета)
-          </button>
+          {/* Experimental body-controlled runner modes — hidden #-routes for now. */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = 'online'
+                window.location.reload()
+              }}
+              className="flex items-center gap-1.5 rounded-full border border-edge bg-card px-4 py-1.5 text-xs font-semibold text-t2 transition-colors hover:border-edge2 hover:text-t1"
+            >
+              🌐 Онлайн с другом <span className="text-t3">· бета</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = 'runner'
+                window.location.reload()
+              }}
+              className="flex items-center gap-1.5 rounded-full border border-edge bg-card px-4 py-1.5 text-xs font-semibold text-t2 transition-colors hover:border-edge2 hover:text-t1"
+            >
+              🏃 Бегун · соло <span className="text-t3">· бета</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

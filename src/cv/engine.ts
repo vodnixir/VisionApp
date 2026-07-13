@@ -84,6 +84,35 @@ const CROP_QUANTUM = 32
 /** localStorage key remembering which TFJS backend actually works here. */
 const BACKEND_CACHE_KEY = 'sb.backend.v1'
 
+/* ---------------- Hitmarker particles ---------------- */
+
+/**
+ * One neon hitmarker spark. Position/velocity live in DISPLAY space (already
+ * mirror-flipped at spawn), so the render step draws them as-is and they always
+ * land on the correct side of a TV-mirrored arena.
+ */
+interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  alpha: number
+  color: string
+  size: number
+}
+
+/**
+ * Smoothed speed (0..1) above which a wrist burst spawns — a strong, near-full
+ * strike (~2.5× the idle/deadzone motion floor), not casual guarding.
+ */
+const BURST_SPEED = 0.7
+/** Min gap between bursts per player, so a fast flurry sparks steadily without flooding. */
+const BURST_COOLDOWN_MS = 90
+/** Per-frame velocity retention (drag) applied to each particle. */
+const PARTICLE_DRAG = 0.9
+/** Per-frame alpha lost by each particle (≈22 frames of life). */
+const PARTICLE_FADE = 0.045
+
 export interface EnginePlayerFrame {
   present: boolean
   visible: boolean
@@ -143,6 +172,11 @@ export class PoseEngine {
   private lastLuma = 128
   private readonly lumaCanvas = document.createElement('canvas')
   private lumaCtx: CanvasRenderingContext2D | null = null
+
+  /** Live hitmarker sparks, in mirror-corrected display space. */
+  private particles: Particle[] = []
+  /** Last burst time per player, for the per-player burst cooldown. */
+  private lastBurstAt: [number, number] = [-Infinity, -Infinity]
 
   private readonly video: HTMLVideoElement
   private readonly canvas: HTMLCanvasElement
@@ -296,6 +330,8 @@ export class PoseEngine {
     this.stream = null
     this.video.srcObject = null
     this.trackers.forEach((t) => t.reset())
+    this.particles = []
+    this.lastBurstAt = [-Infinity, -Infinity]
   }
 
   /* ---------------- Inference loop ---------------- */
@@ -371,6 +407,13 @@ export class PoseEngine {
 
       this.updateRoi(vw, vh)
       this.sampleLuma()
+
+      // Kinetic feedback: a fast strike throws a neon burst off the moving wrist.
+      // Only while scoring (a live match), so menus/calibration stay clean.
+      if (config.scoring) {
+        this.maybeSpawnBurst(0, now, vw, config.mirror)
+        this.maybeSpawnBurst(1, now, vw, config.mirror)
+      }
 
       const players = this.trackers.map((t) => ({
         present: t.present,
@@ -483,6 +526,65 @@ export class PoseEngine {
     }
   }
 
+  /**
+   * Spawn a burst of neon particles at a player's active wrist when their
+   * smoothed motion crosses the burst threshold. Coordinates are converted to
+   * mirrored DISPLAY space here (once), so the render step draws them untouched
+   * and they land on the correct side of a TV-mirrored arena.
+   */
+  private maybeSpawnBurst(index: 0 | 1, now: number, vw: number, mirror: boolean): void {
+    const tracker = this.trackers[index]
+    if (tracker.speed < BURST_SPEED) return
+    if (now - this.lastBurstAt[index] < BURST_COOLDOWN_MS) return
+    const wrist = tracker.activeWrist()
+    if (!wrist) return
+    this.lastBurstAt[index] = now
+
+    const color = playerColors()[index]
+    const cx = mirror ? vw - wrist.x : wrist.x
+    const cy = wrist.y
+    // 8–12 sparks, a couple more the harder the strike.
+    const count = 8 + Math.round(Math.min(1, (tracker.speed - BURST_SPEED) / (1 - BURST_SPEED)) * 4)
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + Math.random() * 0.6
+      const speed = 2 + Math.random() * 3.5
+      this.particles.push({
+        x: cx,
+        y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        alpha: 1,
+        color,
+        size: 3 + Math.random() * 3,
+      })
+    }
+  }
+
+  /** Advance every live particle one frame, paint it, and prune the dead. */
+  private drawParticles(ctx: CanvasRenderingContext2D): void {
+    if (this.particles.length === 0) return
+    ctx.save()
+    // Additive blend: overlapping neon sparks build a hot core, like a real hit.
+    ctx.globalCompositeOperation = 'lighter'
+    for (const p of this.particles) {
+      p.x += p.vx
+      p.y += p.vy
+      p.vx *= PARTICLE_DRAG
+      p.vy *= PARTICLE_DRAG
+      p.alpha -= PARTICLE_FADE
+      if (p.alpha <= 0) continue
+      ctx.globalAlpha = p.alpha
+      ctx.fillStyle = p.color
+      ctx.shadowColor = p.color
+      ctx.shadowBlur = 10
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.restore()
+    this.particles = this.particles.filter((p) => p.alpha > 0)
+  }
+
   /* ---------------- Render loop ---------------- */
 
   private renderTick = (): void => {
@@ -516,7 +618,11 @@ export class PoseEngine {
     ctx.drawImage(this.video, 0, 0, vw, vh)
     ctx.restore()
 
-    if (!config.drawOverlays) return
+    // Keep sparks fading even when overlays are off so none freeze on screen.
+    if (!config.drawOverlays) {
+      this.drawParticles(ctx)
+      return
+    }
 
     const nowMs = performance.now()
     this.trackers.forEach((tracker, i) => {
@@ -542,6 +648,9 @@ export class PoseEngine {
 
     if (config.hud.mode === 'match') drawMatchHud(ctx, vw, vh, config.hud, config.names)
     else if (config.hud.mode === 'victory') drawVictorySplash(ctx, vw, vh, config.hud)
+
+    // Hitmarkers on top of the HUD so a fast strike always reads.
+    this.drawParticles(ctx)
   }
 
   /* ---------------- Helpers ---------------- */

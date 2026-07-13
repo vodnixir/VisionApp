@@ -11,6 +11,7 @@ import { TournamentScreen } from './components/TournamentScreen'
 import { DEFAULT_HUD } from './cv/draw'
 import type { EngineFrame, EngineHints } from './cv/engine'
 import { useGameState } from './hooks/useGameState'
+import { useWakeLock } from './hooks/useWakeLock'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
 import { useI18n } from './i18n'
 import { MatchRecorder, type MatchClip } from './recorder'
@@ -124,27 +125,6 @@ function generateFreezes(durationMs: number): FreezeWindow[] {
     const start = spanStart + segment * i + Math.random() * Math.max(segment - FREEZE_WINDOW_MS, 0)
     return { start, end: start + FREEZE_WINDOW_MS }
   })
-}
-
-/** Best-effort screen wake lock so the phone doesn't dim mid-match. */
-function useWakeLock() {
-  const sentinelRef = useRef<WakeLockSentinel | null>(null)
-  const acquire = useCallback(() => {
-    navigator.wakeLock
-      ?.request('screen')
-      .then((sentinel) => {
-        sentinelRef.current = sentinel
-      })
-      .catch(() => {
-        /* unsupported or denied — the game still works */
-      })
-  }, [])
-  const release = useCallback(() => {
-    void sentinelRef.current?.release().catch(() => {})
-    sentinelRef.current = null
-  }, [])
-  useEffect(() => release, [release])
-  return { acquire, release }
 }
 
 export default function App() {

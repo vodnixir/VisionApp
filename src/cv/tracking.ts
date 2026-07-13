@@ -479,6 +479,63 @@ export function motionDelta(prev: KpMap, curr: KpMap, bboxDiagonal: number): num
   return weightSum > 0 ? sum / weightSum : 0
 }
 
+/* ---------------- Anti-cheat: movement amplitude ---------------- */
+
+/**
+ * A real athletic move throws the wrist FAR from the shoulder (a full-extension
+ * punch, a wide dodge). Rapid micro-shaking with the fists tucked at the chest
+ * produces big pixel deltas without any real reach — the classic score-farming
+ * cheat. We measure how far the more-extended wrist reaches from its shoulder,
+ * as a fraction of the body's bounding-box HEIGHT, and scale the frame's motion
+ * by it: tucked-in shaking is nearly nullified, full extension is rewarded.
+ */
+/** Below this reach (fraction of bbox height) the hands are tucked in — discount hard. */
+export const AMPLITUDE_MIN_RATIO = 0.18
+/** Reach where movement counts at full value (neutral, ×1). */
+export const AMPLITUDE_NEUTRAL_RATIO = 0.32
+/** At/above this reach the arm is fully extended — award the top bonus. */
+export const AMPLITUDE_MAX_RATIO = 0.55
+/** Multiplier for tucked-in micro-movements (near-nullifies wrist shaking). */
+export const AMPLITUDE_MICRO_FACTOR = 0.15
+/** Top multiplier for a full-extension punch / wide dodge. */
+export const AMPLITUDE_MAX_BONUS = 1.5
+
+/** Wrist→same-side-shoulder pairs, the reach signal for the amplitude gate. */
+export const WRIST_SHOULDER_PAIRS = [
+  ['left_wrist', 'left_shoulder'],
+  ['right_wrist', 'right_shoulder'],
+] as const
+
+/**
+ * Amplitude multiplier for one frame, from the current motion keypoints:
+ *  - hands tucked at the chest  → AMPLITUDE_MICRO_FACTOR  (cheat discount)
+ *  - normal reach               → ramps up to ×1
+ *  - full arm extension / dodge → ramps up to AMPLITUDE_MAX_BONUS
+ * Returns 1 (neutral) when no wrist+shoulder pair is visible, so hiding an arm
+ * never silently zeroes a legitimate mover.
+ */
+export function amplitudeFactor(curr: KpMap, bboxHeight: number): number {
+  if (bboxHeight <= 0) return 1
+  let reach = -1
+  for (const [wristName, shoulderName] of WRIST_SHOULDER_PAIRS) {
+    const wrist = curr.get(wristName)
+    const shoulder = curr.get(shoulderName)
+    if (!wrist || !shoulder) continue
+    reach = Math.max(reach, Math.hypot(wrist.x - shoulder.x, wrist.y - shoulder.y) / bboxHeight)
+  }
+  if (reach < 0) return 1 // no wrist+shoulder pair this frame — stay neutral
+  if (reach <= AMPLITUDE_MIN_RATIO) return AMPLITUDE_MICRO_FACTOR
+  if (reach >= AMPLITUDE_MAX_RATIO) return AMPLITUDE_MAX_BONUS
+  if (reach < AMPLITUDE_NEUTRAL_RATIO) {
+    // MIN..NEUTRAL: discount ramps up to ×1.
+    const t = (reach - AMPLITUDE_MIN_RATIO) / (AMPLITUDE_NEUTRAL_RATIO - AMPLITUDE_MIN_RATIO)
+    return AMPLITUDE_MICRO_FACTOR + (1 - AMPLITUDE_MICRO_FACTOR) * t
+  }
+  // NEUTRAL..MAX: ×1 ramps up to the bonus.
+  const t = (reach - AMPLITUDE_NEUTRAL_RATIO) / (AMPLITUDE_MAX_RATIO - AMPLITUDE_NEUTRAL_RATIO)
+  return 1 + (AMPLITUDE_MAX_BONUS - 1) * t
+}
+
 /* ---------------- Per-player tracker ---------------- */
 
 /**
@@ -496,6 +553,8 @@ export class PlayerTracker implements SlotAnchor {
   face: FaceAnchor | null = null
   /** Raw torso geometry for runner gesture control (null when core not visible). */
   posture: RawPosture | null = null
+  /** Latest frame's motion keypoints (full-frame px) — read by the hitmarker FX. */
+  motionKp: KpMap | null = null
   framesSinceSeen = Infinity
   lastBBox: BBox | null = null
   lastSeenAtMs = -Infinity
@@ -549,7 +608,10 @@ export class PlayerTracker implements SlotAnchor {
     const kp = extractMotionKeypoints(candidate.pose)
     if (scoring && this.prevKp && consecutive && dt > 0) {
       const diag = Math.hypot(this.bbox.w, this.bbox.h)
-      const perSecond = motionDelta(this.prevKp, kp, diag) / dt
+      // Anti-cheat: reward real amplitude (full-extension punches / wide dodges)
+      // and discount fists-at-the-chest micro-shaking that fakes a high delta.
+      const amp = amplitudeFactor(kp, this.bbox.h)
+      const perSecond = (motionDelta(this.prevKp, kp, diag) * amp) / dt
       const overDeadzone = Math.max(0, perSecond - MOTION_DEADZONE)
       const normalized = Math.min(overDeadzone / (MOTION_VMAX - MOTION_DEADZONE), 1)
       this.speed = ema(this.speed, normalized, alphaFromTau(safeDt, SPEED_TAU_S))
@@ -558,7 +620,31 @@ export class PlayerTracker implements SlotAnchor {
     }
 
     this.prevKp = kp
+    this.motionKp = kp
     this.framesSinceSeen = 0
+  }
+
+  /**
+   * The more-extended wrist (the "punching" hand) in full-frame px, or null.
+   * Used by the hitmarker FX to spawn a burst where the action actually is.
+   */
+  activeWrist(): Point | null {
+    const kp = this.motionKp
+    if (!kp) return null
+    let best: Point | null = null
+    let bestReach = -1
+    for (const [wristName, shoulderName] of WRIST_SHOULDER_PAIRS) {
+      const wrist = kp.get(wristName)
+      const shoulder = kp.get(shoulderName)
+      if (!wrist || !shoulder) continue
+      const reach = Math.hypot(wrist.x - shoulder.x, wrist.y - shoulder.y)
+      if (reach > bestReach) {
+        bestReach = reach
+        best = wrist
+      }
+    }
+    // Fall back to any visible wrist so a burst still lands somewhere sensible.
+    return best ?? kp.get('left_wrist') ?? kp.get('right_wrist') ?? null
   }
 
   /** Called when the player was NOT seen this frame but the track persists. */
@@ -570,6 +656,7 @@ export class PlayerTracker implements SlotAnchor {
   private expire(): void {
     this.bbox = null
     this.prevKp = null
+    this.motionKp = null
     this.face = null
     this.posture = null
     this.speed = 0

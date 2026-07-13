@@ -171,17 +171,19 @@ export function stepRunner(state: RunnerState, input: RunnerInput): RunnerEvents
   // Despawn what's behind the player.
   state.entities = state.entities.filter((e) => e.z <= REMOVE_Z)
 
-  // Spawn on a cadence that tightens as the run speeds up.
+  // Spawn on a cadence that tightens as the run speeds up. The spawn stream is a
+  // pure function of the seeded rng + the elapsed-time gate: each spawn consumes
+  // exactly two rng values (lane, then type) and the push never depends on the
+  // current entities' z positions — so two phones on the same seed draw the same
+  // obstacle sequence. (An earlier z-based "don't stack" guard was removed: it
+  // could push on one device and skip on the other, splitting the streams. The
+  // ≥SPAWN_MIN_MS cadence already keeps obstacles comfortably apart.)
   state.spawnCooldownMs -= input.dt * 1000
   if (!state.over && state.spawnCooldownMs <= 0) {
     state.spawnCooldownMs = Math.max(SPAWN_MIN_MS, SPAWN_BASE_MS / factor)
     const lane = LANES[Math.min(2, Math.floor(state.rng() * 3))]
     const type = pickType(state.rng())
-    // Don't stack a fresh entity right on top of another just-spawned one.
-    const crowded = state.entities.some((e) => e.lane === lane && e.z < 0.14)
-    if (!crowded) {
-      state.entities.push({ id: state.nextId++, lane, z: 0, type, resolved: false })
-    }
+    state.entities.push({ id: state.nextId++, lane, z: 0, type, resolved: false })
   }
 
   return events

@@ -194,7 +194,8 @@ export function drawMatchHud(
   const th = canvasTheme()
   const pad = Math.round(w * 0.015)
   const centerW = Math.max(92, Math.round(w * 0.115))
-  const panelH = Math.max(58, Math.round(h * 0.145))
+  // Thick, arcade-style panels — readable on a phone and across a room on the TV.
+  const panelH = Math.max(74, Math.round(h * 0.185))
   const panelW = Math.round((w - centerW - pad * 4) / 2)
   const captions = hud.panelNames ?? names
 
@@ -368,8 +369,8 @@ function drawPlayerPanel(
   const nameSize = Math.round(h * 0.3)
   const pctSize = Math.round(h * 0.36)
 
-  // Name (truncate to fit half of the panel).
-  ctx.font = `${th.glow ? 700 : 600} ${nameSize}px ${th.font}`
+  // Name (truncate to fit half of the panel). Heavy weight for arcade legibility.
+  ctx.font = `${th.glow ? 900 : 800} ${nameSize}px ${th.font}`
   ctx.textBaseline = 'top'
   ctx.fillStyle = color
   const maxNameW = w * 0.58
@@ -381,13 +382,13 @@ function drawPlayerPanel(
   ctx.fillText(label, isLeft ? x + inset : x + w - inset, y + inset)
 
   // Percent.
-  ctx.font = `${th.glow ? 900 : 700} ${pctSize}px ${th.font}`
+  ctx.font = `${th.glow ? 900 : 800} ${pctSize}px ${th.font}`
   ctx.fillStyle = th.ink
   ctx.textAlign = isLeft ? 'right' : 'left'
   ctx.fillText(`${Math.floor(percent)}%`, isLeft ? x + w - inset : x + inset, y + inset - 2)
 
-  // Progress bar (P2's fills right-to-left for on-TV symmetry).
-  const barH = Math.round(h * 0.22)
+  // Progress bar (P2's fills right-to-left for on-TV symmetry). Thick health-bar.
+  const barH = Math.round(h * 0.3)
   const barY = y + h - inset - barH
   const barW = w - inset * 2
   ctx.fillStyle = th.trackBg
@@ -396,12 +397,12 @@ function drawPlayerPanel(
   const fillW = Math.max((barW * percent) / 100, barH)
   if (percent > 0.5) {
     ctx.fillStyle = color
-    if (th.glow) {
-      ctx.shadowColor = color
-      ctx.shadowBlur = 12
-    }
+    // Amplified neon glow so the filling bar reads from across the room / on TV.
+    ctx.shadowColor = color
+    ctx.shadowBlur = th.glow ? 20 : 10
     roundedRect(ctx, isLeft ? x + inset : x + inset + barW - fillW, barY, fillW, barH, barH / 2)
     ctx.fill()
+    ctx.shadowBlur = 0
   }
   ctx.restore()
 }

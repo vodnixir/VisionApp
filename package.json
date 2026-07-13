@@ -8,6 +8,7 @@
     "dev:lan": "vite --host --mode lan",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "tsx scripts/cv-sanity.ts",
     "test:cv": "tsx scripts/cv-sanity.ts",
     "preview": "vite preview"
   },

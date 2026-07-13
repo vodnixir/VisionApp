@@ -1,20 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { sfx } from '../audio/sfx'
 import { usePoseDetection } from '../hooks/usePoseDetection'
-import {
-  DEFAULT_GESTURE_CONFIG,
-  averageNeutral,
-  createGestureState,
-  detectGesture,
-  type GestureConfig,
-  type GestureReading,
-  type Neutral,
-  type PostureSample,
-} from '../runner/gestures'
+import { useRunnerControl } from '../runner/useRunnerControl'
+import { DEFAULT_GESTURE_CONFIG, type GestureConfig, type GestureReading } from '../runner/gestures'
 import type { EngineFrame } from '../cv/engine'
-
-/** How long we sample the still stance before locking in the neutral baseline. */
-const CALIBRATE_MS = 1200
 
 /**
  * Detection spike for the single-player runner ("Subway Surfers in reality").
@@ -27,24 +16,18 @@ const CALIBRATE_MS = 1200
 export function RunnerSpikeScreen() {
   const [mirror, setMirror] = useState(true)
   const [config, setConfig] = useState<GestureConfig>(DEFAULT_GESTURE_CONFIG)
-  const [neutral, setNeutral] = useState<Neutral | null>(null)
-  const [calibrating, setCalibrating] = useState(false)
-  const [reliable, setReliable] = useState(false)
   const [reading, setReading] = useState<GestureReading | null>(null)
 
-  const stateRef = useRef(createGestureState())
-  const calibBufRef = useRef<PostureSample[]>([])
-  const calibStartRef = useRef<number | null>(null)
-  // Latest values for the frame callback (which is captured fresh each render,
-  // but refs keep the hot path allocation-free and race-free).
-  const cfgRef = useRef(config)
-  cfgRef.current = config
-  const neutralRef = useRef(neutral)
-  neutralRef.current = neutral
-  const mirrorRef = useRef(mirror)
-  mirrorRef.current = mirror
-  const calibratingRef = useRef(calibrating)
-  calibratingRef.current = calibrating
+  const { reliable, calibrating, calibrated, beginCalibration, handleFrame } = useRunnerControl({
+    mirror,
+    config,
+    onReading: (r) => {
+      if (r.jump) sfx.beep()
+      if (r.laneChanged) sfx.tick()
+      setReading(r)
+    },
+    onCalibrated: () => sfx.gong(),
+  })
 
   // The frame handler needs canvasRef (returned by the hook below), so route it
   // through a ref: the hook already calls the latest handler each frame.
@@ -54,43 +37,7 @@ export function RunnerSpikeScreen() {
   )
 
   onFrameRef.current = (frame: EngineFrame) => {
-    const player = frame.players.find((p) => p.present && p.posture)
-    setReliable(Boolean(player))
-    if (!player || !player.posture) return
-
-    const cw = canvasRef.current?.width ?? 0
-    const raw = player.posture
-    // Mirror the X so "step to your right" reads as +offset, matching the
-    // mirrored video the player sees. Neutral is captured the same way.
-    const centerX = mirrorRef.current && cw > 0 ? cw - raw.centerX : raw.centerX
-    const scale = raw.shoulderWidth > 4 ? raw.shoulderWidth : raw.torsoHeight
-    const sample: PostureSample = {
-      centerX,
-      hipY: raw.hipY,
-      topY: raw.topY,
-      scale,
-      t: frame.now,
-    }
-
-    if (calibratingRef.current) {
-      calibStartRef.current ??= frame.now
-      calibBufRef.current.push(sample)
-      if (frame.now - calibStartRef.current >= CALIBRATE_MS) {
-        const base = averageNeutral(calibBufRef.current)
-        stateRef.current = createGestureState()
-        setNeutral(base)
-        setCalibrating(false)
-        if (base) sfx.gong()
-      }
-      return
-    }
-
-    const base = neutralRef.current
-    if (!base) return
-    const next = detectGesture(stateRef.current, sample, base, cfgRef.current)
-    if (next.jump) sfx.beep()
-    if (next.laneChanged) sfx.tick()
-    setReading(next)
+    handleFrame(frame, canvasRef.current?.width ?? 0)
   }
 
   useEffect(() => {
@@ -105,11 +52,8 @@ export function RunnerSpikeScreen() {
   }
 
   const handleCalibrate = () => {
-    calibBufRef.current = []
-    calibStartRef.current = null
-    setNeutral(null)
     setReading(null)
-    setCalibrating(true)
+    beginCalibration()
   }
 
   const goBack = () => {
@@ -126,7 +70,7 @@ export function RunnerSpikeScreen() {
       <canvas ref={canvasRef} className="h-full w-full object-contain" />
 
       {/* Lane guides — three columns, active one highlighted. */}
-      {neutral && (
+      {calibrated && (
         <div className="pointer-events-none absolute inset-0 flex">
           {([-1, 0, 1] as const).map((lane) => (
             <div
@@ -172,7 +116,7 @@ export function RunnerSpikeScreen() {
       </div>
 
       {/* Live event pills */}
-      {neutral && (
+      {calibrated && (
         <div className="pointer-events-none absolute inset-x-0 top-16 flex flex-col items-center gap-2">
           <Pill on={reading?.airborne} onColor="bg-sky-500">
             ПРЫЖОК
@@ -198,7 +142,7 @@ export function RunnerSpikeScreen() {
       )}
 
       {/* Calibration prompt / countdown */}
-      {status === 'running' && (calibrating || !neutral) && (
+      {status === 'running' && (calibrating || !calibrated) && (
         <div className="absolute inset-x-0 bottom-28 flex flex-col items-center gap-3">
           <div className="rounded-xl bg-black/70 px-5 py-3 text-center text-sm backdrop-blur">
             {calibrating
@@ -210,7 +154,7 @@ export function RunnerSpikeScreen() {
 
       {/* Bottom controls + tuning */}
       <div className="absolute inset-x-0 bottom-0 space-y-3 p-3">
-        {neutral && reading && (
+        {calibrated && reading && (
           <div className="grid grid-cols-2 gap-2 rounded-xl bg-black/65 p-3 text-xs backdrop-blur sm:grid-cols-4">
             <Metric label="lane" value={reading.laneOffset} />
             <Metric label="reach" value={reading.reachRatio} />
@@ -268,7 +212,7 @@ export function RunnerSpikeScreen() {
               disabled={calibrating}
               className="rounded-full bg-white px-8 py-4 text-lg font-black text-black disabled:opacity-50"
             >
-              {neutral ? 'Калибровать заново' : 'Калибровать'}
+              {calibrated ? 'Калибровать заново' : 'Калибровать'}
             </button>
           )}
         </div>
