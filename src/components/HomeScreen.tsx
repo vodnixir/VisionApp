@@ -1,10 +1,12 @@
 import {
   Cast,
+  FlaskConical,
   LayoutGrid,
   LayoutList,
   Square,
   Trophy,
   Users,
+  X,
   Zap,
   type LucideIcon,
 } from 'lucide-react'
@@ -54,6 +56,26 @@ const LAYOUT_ICON: Record<LayoutId, LucideIcon> = {
   hero: Square,
 }
 
+/** Experimental body-controlled modes, gathered behind the "Beta" entry. */
+interface BetaMode {
+  key: string
+  hash: string
+  emoji: string
+  labelKey: 'beta.online' | 'beta.runner'
+  hintKey: 'beta.onlineHint' | 'beta.runnerHint'
+}
+
+const BETA_MODES: BetaMode[] = [
+  { key: 'online', hash: 'online', emoji: '🌐', labelKey: 'beta.online', hintKey: 'beta.onlineHint' },
+  { key: 'runner', hash: 'runner', emoji: '🏃', labelKey: 'beta.runner', hintKey: 'beta.runnerHint' },
+]
+
+/** Each beta mode lives at its own hash route rendered from main.tsx. */
+function openBetaMode(hash: string) {
+  window.location.hash = hash
+  window.location.reload()
+}
+
 /** Host console home: the phone is the remote, the show is on the TV. */
 export function HomeScreen({
   onQuickMatch,
@@ -68,6 +90,7 @@ export function HomeScreen({
   const { theme, setTheme } = useTheme()
   const { layout, setLayout } = useLayout()
   const [profileCount] = useState(() => loadProfiles().length)
+  const [betaOpen, setBetaOpen] = useState(false)
   // Refreshes whenever we come back to Home (the component remounts).
   const [session] = useState(loadSession)
   const leader = sessionLeader(session)
@@ -101,6 +124,13 @@ export function HomeScreen({
       hint: t('home.playersSaved', { n: profileCount }),
       Icon: Users,
       onClick: onRoster,
+    },
+    {
+      key: 'beta',
+      label: t('home.beta'),
+      hint: t('home.betaHint'),
+      Icon: FlaskConical,
+      onClick: () => setBetaOpen(true),
     },
     ...(castSupported
       ? [
@@ -204,30 +234,68 @@ export function HomeScreen({
           </div>
 
           <p className="text-center text-xs text-t3">{t('home.footer')}</p>
+        </div>
+      </div>
 
-          {/* Experimental body-controlled runner modes — hidden #-routes for now. */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                window.location.hash = 'online'
-                window.location.reload()
-              }}
-              className="flex items-center gap-1.5 rounded-full border border-edge bg-card px-4 py-1.5 text-xs font-semibold text-t2 transition-colors hover:border-edge2 hover:text-t1"
-            >
-              🌐 Онлайн с другом <span className="text-t3">· бета</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                window.location.hash = 'runner'
-                window.location.reload()
-              }}
-              className="flex items-center gap-1.5 rounded-full border border-edge bg-card px-4 py-1.5 text-xs font-semibold text-t2 transition-colors hover:border-edge2 hover:text-t1"
-            >
-              🏃 Бегун · соло <span className="text-t3">· бета</span>
-            </button>
+      {betaOpen && <BetaOverlay onClose={() => setBetaOpen(false)} />}
+    </div>
+  )
+}
+
+/* ---------------- Beta modes ---------------- */
+
+/** A modal sheet listing the experimental modes, each a hash-route jump. */
+function BetaOverlay({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div
+      className="absolute inset-0 z-30 flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-3xl border border-edge bg-page p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="mb-4 flex items-start justify-between gap-3">
+          <div className="flex flex-col">
+            <span className="flex items-center gap-2 text-lg font-semibold text-t1">
+              <FlaskConical className="size-5 text-t3" aria-hidden />
+              {t('beta.title')}
+            </span>
+            <span className="mt-0.5 text-xs text-t3">{t('beta.subtitle')}</span>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('common.back')}
+            className="rounded-lg p-1.5 text-t3 transition-colors hover:bg-selbg hover:text-t1"
+          >
+            <X className="size-5" aria-hidden />
+          </button>
+        </header>
+
+        <div className="flex flex-col gap-3">
+          {BETA_MODES.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => openBetaMode(m.hash)}
+              className="flex items-center gap-3 rounded-2xl border border-edge bg-card px-4 py-4 text-left transition-colors hover:border-edge2"
+            >
+              <span className="text-2xl" aria-hidden>
+                {m.emoji}
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="flex items-center gap-2">
+                  <span className="text-base font-semibold text-t1">{t(m.labelKey)}</span>
+                  <span className="rounded-full bg-selbg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-t3">
+                    {t('beta.badge')}
+                  </span>
+                </span>
+                <span className="text-xs text-t3">{t(m.hintKey)}</span>
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
