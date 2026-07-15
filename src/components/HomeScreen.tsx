@@ -1,22 +1,28 @@
 import {
   Cast,
   FlaskConical,
+  Footprints,
+  Globe,
   LayoutGrid,
   LayoutList,
   Square,
   Trophy,
   Users,
+  Volume2,
+  VolumeX,
   X,
   Zap,
   type LucideIcon,
 } from 'lucide-react'
 import { useState } from 'react'
+import { music, useMusic } from '../audio/music'
 import { LANGS, useI18n } from '../i18n'
 import { LAYOUT_IDS, useLayout, type LayoutId } from '../layout'
 import { loadSession, sessionLeader } from '../session'
 import type { CastStatus } from '../show'
 import { loadProfiles } from '../storage'
 import { THEME_IDS, useTheme, type ThemeId } from '../theme'
+import { MenuBackdrop } from './MenuBackdrop'
 
 interface Props {
   onQuickMatch: () => void
@@ -56,22 +62,32 @@ const LAYOUT_ICON: Record<LayoutId, LucideIcon> = {
   hero: Square,
 }
 
-/** Experimental body-controlled modes, gathered behind the "Beta" entry. */
+/** One PvP/PvE/utility group of home actions, rendered under its own label. */
+interface ActionGroup {
+  key: string
+  label: string
+  actions: Action[]
+}
+
+/**
+ * Experimental dev tools behind the "Beta" entry. The player-facing modes
+ * (Online, Runner) graduated to first-class PvP / PvE entries; what stays here
+ * is the gesture-tuning spike.
+ */
 interface BetaMode {
   key: string
   hash: string
   emoji: string
-  labelKey: 'beta.online' | 'beta.runner'
-  hintKey: 'beta.onlineHint' | 'beta.runnerHint'
+  labelKey: 'beta.spike'
+  hintKey: 'beta.spikeHint'
 }
 
 const BETA_MODES: BetaMode[] = [
-  { key: 'online', hash: 'online', emoji: '🌐', labelKey: 'beta.online', hintKey: 'beta.onlineHint' },
-  { key: 'runner', hash: 'runner', emoji: '🏃', labelKey: 'beta.runner', hintKey: 'beta.runnerHint' },
+  { key: 'spike', hash: 'runner-spike', emoji: '🎯', labelKey: 'beta.spike', hintKey: 'beta.spikeHint' },
 ]
 
-/** Each beta mode lives at its own hash route rendered from main.tsx. */
-function openBetaMode(hash: string) {
+/** Each hash route (game mode / tool) is rendered from main.tsx after a reload. */
+function openHashRoute(hash: string) {
   window.location.hash = hash
   window.location.reload()
 }
@@ -89,6 +105,7 @@ export function HomeScreen({
   const { t, lang, setLang } = useI18n()
   const { theme, setTheme } = useTheme()
   const { layout, setLayout } = useLayout()
+  const { musicEnabled, setMusicEnabled } = useMusic()
   const [profileCount] = useState(() => loadProfiles().length)
   const [betaOpen, setBetaOpen] = useState(false)
   // Refreshes whenever we come back to Home (the component remounts).
@@ -101,60 +118,147 @@ export function HomeScreen({
         ? t('cast.connecting')
         : t('cast.tv')
 
-  const actions: Action[] = [
+  // The flagship PvP action — the massive neon PLAY hero.
+  const primary: Action = {
+    key: 'quick',
+    label: t('home.quick'),
+    hint: t('home.quickHint'),
+    Icon: Zap,
+    onClick: onQuickMatch,
+    primary: true,
+  }
+
+  // Top-level navigation: games split into PvP (against people) and PvE
+  // (against the game), plus a utility group.
+  const groups: ActionGroup[] = [
     {
-      key: 'quick',
-      label: t('home.quick'),
-      hint: t('home.quickHint'),
-      Icon: Zap,
-      onClick: onQuickMatch,
-      primary: true,
+      key: 'pvp',
+      label: t('nav.pvp'),
+      actions: [
+        {
+          key: 'tournament',
+          label: t('home.tournament'),
+          hint: tournamentActive ? t('home.tournamentResume') : t('home.tournamentHint'),
+          Icon: Trophy,
+          onClick: onTournament,
+          dot: tournamentActive,
+        },
+        {
+          key: 'online',
+          label: t('home.online'),
+          hint: t('home.onlineHint'),
+          Icon: Globe,
+          onClick: () => openHashRoute('online'),
+        },
+      ],
     },
     {
-      key: 'tournament',
-      label: t('home.tournament'),
-      hint: tournamentActive ? t('home.tournamentResume') : t('home.tournamentHint'),
-      Icon: Trophy,
-      onClick: onTournament,
-      dot: tournamentActive,
+      key: 'pve',
+      label: t('nav.pve'),
+      actions: [
+        {
+          key: 'runner',
+          label: t('home.runner'),
+          hint: t('home.runnerHint'),
+          Icon: Footprints,
+          onClick: () => openHashRoute('runner'),
+        },
+      ],
     },
     {
-      key: 'roster',
-      label: t('home.players'),
-      hint: t('home.playersSaved', { n: profileCount }),
-      Icon: Users,
-      onClick: onRoster,
+      key: 'more',
+      label: t('nav.more'),
+      actions: [
+        {
+          key: 'roster',
+          label: t('home.players'),
+          hint: t('home.playersSaved', { n: profileCount }),
+          Icon: Users,
+          onClick: onRoster,
+        },
+        {
+          key: 'beta',
+          label: t('home.beta'),
+          hint: t('home.betaHint'),
+          Icon: FlaskConical,
+          onClick: () => setBetaOpen(true),
+        },
+        ...(castSupported
+          ? [
+              {
+                key: 'cast',
+                label: castLabel,
+                hint: t('cast.hint'),
+                Icon: Cast,
+                onClick: onCast,
+                dot: castStatus === 'live',
+                iconActive: castStatus === 'live',
+              } satisfies Action,
+            ]
+          : []),
+      ],
     },
-    {
-      key: 'beta',
-      label: t('home.beta'),
-      hint: t('home.betaHint'),
-      Icon: FlaskConical,
-      onClick: () => setBetaOpen(true),
-    },
-    ...(castSupported
-      ? [
-          {
-            key: 'cast',
-            label: castLabel,
-            hint: t('cast.hint'),
-            Icon: Cast,
-            onClick: onCast,
-            dot: castStatus === 'live',
-            iconActive: castStatus === 'live',
-          } satisfies Action,
-        ]
-      : []),
   ]
+
+  /** Render a group's actions in the shape the active layout dictates. */
+  const renderItems = (acts: Action[]) => {
+    if (layout === 'grid') {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          {acts.map((a) => (
+            <GridTile key={a.key} action={a} />
+          ))}
+        </div>
+      )
+    }
+    if (layout === 'hero') {
+      return (
+        <div className="grid grid-cols-3 gap-2">
+          {acts.map((a) => (
+            <IconAction key={a.key} action={a} />
+          ))}
+        </div>
+      )
+    }
+    return (
+      <div className="flex flex-col gap-3">
+        {acts.map((a) => (
+          <ListRow key={a.key} action={a} />
+        ))}
+      </div>
+    )
+  }
+
+  const toggleMusic = () => {
+    music.unlock()
+    setMusicEnabled(!musicEnabled)
+  }
 
   return (
     <div className="screen absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-page px-4 py-6">
-      <div className="flex w-full max-w-md flex-1 flex-col gap-3">
+      <MenuBackdrop />
+      <div className="relative z-10 flex w-full max-w-md flex-1 flex-col gap-3">
         <header className="mb-1 flex items-center justify-between">
           <h1 className="brand text-base text-t1">
             <span className="brand-a">Speed</span> <span className="brand-b">Battle</span>
           </h1>
-          <div className="flex gap-1">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={toggleMusic}
+              aria-label={musicEnabled ? t('music.on') : t('music.off')}
+              aria-pressed={musicEnabled}
+              title={musicEnabled ? t('music.on') : t('music.off')}
+              className={`mr-1 rounded-md p-1.5 transition-colors ${
+                musicEnabled ? 'text-t1' : 'text-t3 hover:text-t2'
+              }`}
+            >
+              {musicEnabled ? (
+                <Volume2 className="size-4" aria-hidden />
+              ) : (
+                <VolumeX className="size-4" aria-hidden />
+              )}
+            </button>
             {LANGS.map((l) => (
               <button
                 key={l}
@@ -170,13 +274,25 @@ export function HomeScreen({
           </div>
         </header>
 
-        {layout === 'grid' ? (
-          <GridBody actions={actions} />
-        ) : layout === 'hero' ? (
-          <HeroBody actions={actions} />
-        ) : (
-          <StackBody actions={actions} />
-        )}
+        <button
+          type="button"
+          onClick={() => {
+            music.unlock()
+            primary.onClick()
+          }}
+          className="neon-play"
+          aria-label={t('home.play')}
+        >
+          <span className="neon-play-label">{t('home.play')}</span>
+          <span className="neon-play-sub">{t('home.playSub')}</span>
+        </button>
+
+        {groups.map((g) => (
+          <section key={g.key} className="flex flex-col gap-2">
+            <h2 className="px-1 text-[11px] font-bold uppercase tracking-wider text-t3">{g.label}</h2>
+            {renderItems(g.actions)}
+          </section>
+        ))}
 
         <div className="mt-auto flex flex-col items-center gap-3 pt-4">
           {session.matches > 0 && (
@@ -279,7 +395,7 @@ function BetaOverlay({ onClose }: { onClose: () => void }) {
             <button
               key={m.key}
               type="button"
-              onClick={() => openBetaMode(m.hash)}
+              onClick={() => openHashRoute(m.hash)}
               className="flex items-center gap-3 rounded-2xl border border-edge bg-card px-4 py-4 text-left transition-colors hover:border-edge2"
             >
               <span className="text-2xl" aria-hidden>
@@ -302,85 +418,7 @@ function BetaOverlay({ onClose }: { onClose: () => void }) {
   )
 }
 
-/* ---------------- Layout bodies ---------------- */
-
-/** Classic: a big primary CTA over a vertical list of rows. */
-function StackBody({ actions }: { actions: Action[] }) {
-  const primary = actions.find((a) => a.primary)
-  const rest = actions.filter((a) => !a.primary)
-  return (
-    <>
-      {primary && <PrimaryCard action={primary} />}
-      {rest.map((a) => (
-        <ListRow key={a.key} action={a} />
-      ))}
-    </>
-  )
-}
-
-/** Compact tiles: primary banner, then a 2-column grid. Odd tile spans wide. */
-function GridBody({ actions }: { actions: Action[] }) {
-  const primary = actions.find((a) => a.primary)
-  const rest = actions.filter((a) => !a.primary)
-  const oddFirstWide = rest.length % 2 === 1
-  return (
-    <>
-      {primary && <PrimaryCard action={primary} />}
-      <div className="grid grid-cols-2 gap-3">
-        {rest.map((a, i) => (
-          <GridTile key={a.key} action={a} wide={oddFirstWide && i === 0} />
-        ))}
-      </div>
-    </>
-  )
-}
-
-/** Focus mode: one oversized action fills the screen; the rest are icon buttons. */
-function HeroBody({ actions }: { actions: Action[] }) {
-  const primary = actions.find((a) => a.primary)
-  const rest = actions.filter((a) => !a.primary)
-  return (
-    <>
-      {primary && (
-        <button
-          type="button"
-          onClick={primary.onClick}
-          className="flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl bg-accent px-6 py-12 text-center transition-transform active:scale-[0.98]"
-        >
-          <primary.Icon className="size-14 text-on-accent" aria-hidden />
-          <span className="text-3xl font-semibold text-on-accent">{primary.label}</span>
-          {primary.hint && (
-            <span className="max-w-xs text-sm text-on-accent/65">{primary.hint}</span>
-          )}
-        </button>
-      )}
-      <div className="grid grid-cols-3 gap-2">
-        {rest.map((a) => (
-          <IconAction key={a.key} action={a} />
-        ))}
-      </div>
-    </>
-  )
-}
-
 /* ---------------- Shared pieces ---------------- */
-
-function PrimaryCard({ action }: { action: Action }) {
-  const { Icon } = action
-  return (
-    <button
-      type="button"
-      onClick={action.onClick}
-      className="flex flex-col gap-1 rounded-2xl bg-accent px-5 py-5 text-left transition-transform active:scale-[0.98]"
-    >
-      <span className="flex items-center gap-2 text-lg font-semibold text-on-accent">
-        <Icon className="size-5" aria-hidden />
-        {action.label}
-      </span>
-      {action.hint && <span className="text-sm text-on-accent/65">{action.hint}</span>}
-    </button>
-  )
-}
 
 function ListRow({ action }: { action: Action }) {
   const { Icon } = action

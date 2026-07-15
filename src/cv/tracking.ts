@@ -166,10 +166,13 @@ export function iou(a: BBox, b: BBox): number {
 }
 
 /**
- * STRICT FILTERING: drop low-confidence poses, then keep only the two largest
- * people by bounding-box area — background bystanders are ignored.
+ * STRICT FILTERING: drop low-confidence poses, then keep only the `max` largest
+ * people by bounding-box area — background bystanders are ignored. `max` is the
+ * mode's player count (2 for the duel, 1/2/3 for the runner modes), the honest
+ * equivalent of MoveNet's maxPoses: we let the model find everyone, then take
+ * the N nearest bodies.
  */
-export function selectFighters(poses: Pose[]): Candidate[] {
+export function selectFighters(poses: Pose[], max = 2): Candidate[] {
   const candidates: Candidate[] = []
   for (const pose of poses) {
     if (poseScore(pose) < POSE_MIN_SCORE) continue
@@ -180,7 +183,7 @@ export function selectFighters(poses: Pose[]): Candidate[] {
     candidates.push({ pose, bbox, anchorX })
   }
   candidates.sort((a, b) => bboxArea(b.bbox) - bboxArea(a.bbox))
-  return candidates.slice(0, 2)
+  return candidates.slice(0, Math.max(1, max))
 }
 
 /**
@@ -202,6 +205,26 @@ export function assignRoles(
   }
   const sorted = [...candidates].sort((a, b) => displayX(a) - displayX(b))
   return [sorted[0], sorted[1]]
+}
+
+/**
+ * POSITIONAL ROLE ASSIGNMENT for N players (runner Duel / Squad): sort the
+ * fighters left-to-right on screen and hand slot i to the i-th person from the
+ * left, so the leftmost player always drives the leftmost lane. Unlike the duel
+ * this stays purely positional — the runner modes don't lock roles, players hold
+ * their own spot in the room rather than crossing sides.
+ */
+export function assignRolesN(
+  candidates: Candidate[],
+  count: number,
+  videoWidth: number,
+  mirror: boolean,
+): (Candidate | null)[] {
+  const displayX = (c: Candidate) => (mirror ? videoWidth - c.anchorX : c.anchorX)
+  const sorted = [...candidates].sort((a, b) => displayX(a) - displayX(b))
+  const roles: (Candidate | null)[] = new Array(Math.max(1, count)).fill(null)
+  for (let i = 0; i < roles.length; i++) roles[i] = sorted[i] ?? null
+  return roles
 }
 
 /** What the identity matcher needs to know about a player slot. */

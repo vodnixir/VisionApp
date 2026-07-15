@@ -26,6 +26,10 @@ const en = {
   'home.beta': 'Beta',
   'home.betaHint': 'Experimental modes',
   'home.footer': 'Phone is the remote. The show is on the TV.',
+  'home.play': 'PLAY',
+  'home.playSub': 'Quick match · 2 players',
+  'music.on': 'Music on',
+  'music.off': 'Music off',
 
   'beta.title': 'Beta modes',
   'beta.subtitle': 'Rough around the edges — try them out.',
@@ -33,6 +37,8 @@ const en = {
   'beta.onlineHint': 'Race a friend on two phones',
   'beta.runner': 'Runner · solo',
   'beta.runnerHint': 'Steer with your body, dodge the metro',
+  'beta.spike': 'Gesture tuner',
+  'beta.spikeHint': 'Developer tool for lane / jump / crouch',
   'beta.badge': 'beta',
 
   'roster.title': 'Players',
@@ -75,6 +81,13 @@ const en = {
   'setup.combo': 'Combo',
   'setup.mode': 'Game mode',
   'setup.mask': 'Masks',
+  'setup.sensitivity': 'Sensitivity',
+  'sens.low': 'Low',
+  'sens.medium': 'Medium',
+  'sens.high': 'High',
+  'setup.paceFast': 'Fast fill',
+  'setup.paceNormal': 'Normal fill',
+  'setup.paceSlow': 'Slow fill',
 
   'gmode.classic': 'Classic',
   'gmode.classicHint': 'First to fill the bar',
@@ -176,6 +189,42 @@ const en = {
   'runner.again': 'Again',
   'runner.exit': 'Exit',
 
+  'common.letsGo': "Let's go",
+  'common.rules': 'How to play',
+
+  'nav.pvp': 'PvP · against people',
+  'nav.pve': 'PvE · against the game',
+  'nav.more': 'More',
+
+  'home.runner': 'Metro Runner',
+  'home.runnerHint': 'Dodge the metro — solo, duel or squad',
+  'home.online': 'Online battle',
+  'home.onlineHint': 'Race a friend on two phones',
+
+  'runner.chooseMode': 'Choose a mode',
+  'runner.mode.solo': 'Solo',
+  'runner.mode.soloHint': '1 player · beat your record',
+  'runner.mode.duel': 'Duel',
+  'runner.mode.duelHint': '2 players side by side',
+  'runner.mode.squad': 'Squad',
+  'runner.mode.squadHint': '3 players on one screen',
+
+  'runner.rule.lane': 'Step left or right to change lane',
+  'runner.rule.jump': 'Jump to clear a low barrier',
+  'runner.rule.crouch': 'Crouch under a high barrier',
+  'runner.rule.coins': 'Grab coins for bonus points',
+  'runner.rule.livesSolo': 'Three lives — run as far as you can',
+  'runner.rule.livesRace': 'Three lives each — last runner standing wins',
+
+  'runner.wins': '{name} wins!',
+  'runner.draw': "It's a draw!",
+  'runner.pLabel': 'P{n}',
+
+  'battle.rules.title': 'Speed Battle',
+  'battle.rule.move': 'Move fast — big, full-body motion fills your bar',
+  'battle.rule.fill': 'First to 100% wins the round',
+  'battle.rule.frame': 'Left player is blue, right player is red',
+
   'online.opponent': 'OPPONENT',
   'online.oppOffline': 'Opponent not connected',
   'online.title': 'Online battle',
@@ -225,6 +274,7 @@ const en = {
   'online.roleGuest': 'guest',
   'online.copied': 'Copied',
   'online.copy': 'Copy',
+  'online.scanQr': 'Point the other phone here to scan',
   'online.wait': 'One sec…',
   'online.mirror': 'Mirror',
 } as const
@@ -244,6 +294,10 @@ const ru: Dict = {
   'home.beta': 'Бета',
   'home.betaHint': 'Экспериментальные режимы',
   'home.footer': 'Телефон — пульт. Игра идёт на ТВ.',
+  'home.play': 'ИГРАТЬ',
+  'home.playSub': 'Быстрый матч · 2 игрока',
+  'music.on': 'Музыка вкл',
+  'music.off': 'Музыка выкл',
 
   'beta.title': 'Бета-режимы',
   'beta.subtitle': 'Ещё сырые — попробуй в деле.',
@@ -251,6 +305,8 @@ const ru: Dict = {
   'beta.onlineHint': 'Гонка с другом на двух телефонах',
   'beta.runner': 'Бегун · соло',
   'beta.runnerHint': 'Управляй телом, уворачивайся в метро',
+  'beta.spike': 'Настройка жестов',
+  'beta.spikeHint': 'Инструмент для полос / прыжков / приседаний',
   'beta.badge': 'бета',
 
   'roster.title': 'Игроки',
@@ -293,6 +349,13 @@ const ru: Dict = {
   'setup.combo': 'Комбо',
   'setup.mode': 'Режим игры',
   'setup.mask': 'Маски',
+  'setup.sensitivity': 'Чувствительность',
+  'sens.low': 'Низкая',
+  'sens.medium': 'Средняя',
+  'sens.high': 'Высокая',
+  'setup.paceFast': 'Быстрое заполнение',
+  'setup.paceNormal': 'Обычное заполнение',
+  'setup.paceSlow': 'Медленное заполнение',
 
   'gmode.classic': 'Классика',
   'gmode.classicHint': 'Кто быстрее набьёт шкалу',
@@ -394,6 +457,42 @@ const ru: Dict = {
   'runner.again': 'Ещё раз',
   'runner.exit': 'Выход',
 
+  'common.letsGo': 'Поехали',
+  'common.rules': 'Как играть',
+
+  'nav.pvp': 'PvP · против людей',
+  'nav.pve': 'PvE · против игры',
+  'nav.more': 'Ещё',
+
+  'home.runner': 'Бегун по метро',
+  'home.runnerHint': 'Уворачивайся в метро — соло, дуэль или отряд',
+  'home.online': 'Онлайн-баттл',
+  'home.onlineHint': 'Гонка с другом на двух телефонах',
+
+  'runner.chooseMode': 'Выбери режим',
+  'runner.mode.solo': 'Соло',
+  'runner.mode.soloHint': '1 игрок · побей рекорд',
+  'runner.mode.duel': 'Дуэль',
+  'runner.mode.duelHint': '2 игрока рядом',
+  'runner.mode.squad': 'Отряд',
+  'runner.mode.squadHint': '3 игрока на одном экране',
+
+  'runner.rule.lane': 'Шагни влево или вправо — смена полосы',
+  'runner.rule.jump': 'Подпрыгни через низкий барьер',
+  'runner.rule.crouch': 'Присядь под высоким барьером',
+  'runner.rule.coins': 'Собирай монеты за бонусные очки',
+  'runner.rule.livesSolo': 'Три жизни — беги как можно дальше',
+  'runner.rule.livesRace': 'По три жизни — побеждает последний уцелевший',
+
+  'runner.wins': '{name} побеждает!',
+  'runner.draw': 'Ничья!',
+  'runner.pLabel': 'И{n}',
+
+  'battle.rules.title': 'Speed Battle',
+  'battle.rule.move': 'Двигайся быстро — размашистые движения всем телом наполняют шкалу',
+  'battle.rule.fill': 'Первый до 100% выигрывает раунд',
+  'battle.rule.frame': 'Слева — синий, справа — красный',
+
   'online.opponent': 'СОПЕРНИК',
   'online.oppOffline': 'Соперник не подключён',
   'online.title': 'Онлайн-баттл',
@@ -444,6 +543,7 @@ const ru: Dict = {
   'online.roleGuest': 'гость',
   'online.copied': 'Скопировано',
   'online.copy': 'Копировать',
+  'online.scanQr': 'Наведи камеру другого телефона',
   'online.wait': 'Секунду…',
   'online.mirror': 'Зеркало',
 }
@@ -459,6 +559,10 @@ const es: Dict = {
   'home.beta': 'Beta',
   'home.betaHint': 'Modos experimentales',
   'home.footer': 'El móvil es el mando. El show está en la TV.',
+  'home.play': 'JUGAR',
+  'home.playSub': 'Partida rápida · 2 jugadores',
+  'music.on': 'Música activada',
+  'music.off': 'Música desactivada',
 
   'beta.title': 'Modos beta',
   'beta.subtitle': 'Aún en bruto — pruébalos.',
@@ -466,6 +570,8 @@ const es: Dict = {
   'beta.onlineHint': 'Compite con un amigo en dos móviles',
   'beta.runner': 'Corredor · solo',
   'beta.runnerHint': 'Controla con tu cuerpo, esquiva el metro',
+  'beta.spike': 'Ajuste de gestos',
+  'beta.spikeHint': 'Herramienta de desarrollo: carril / salto / agacharse',
   'beta.badge': 'beta',
 
   'roster.title': 'Jugadores',
@@ -508,6 +614,13 @@ const es: Dict = {
   'setup.combo': 'Combo',
   'setup.mode': 'Modo de juego',
   'setup.mask': 'Máscaras',
+  'setup.sensitivity': 'Sensibilidad',
+  'sens.low': 'Baja',
+  'sens.medium': 'Media',
+  'sens.high': 'Alta',
+  'setup.paceFast': 'Llenado rápido',
+  'setup.paceNormal': 'Llenado normal',
+  'setup.paceSlow': 'Llenado lento',
 
   'gmode.classic': 'Clásico',
   'gmode.classicHint': 'El primero en llenar la barra',
@@ -609,6 +722,42 @@ const es: Dict = {
   'runner.again': 'Otra vez',
   'runner.exit': 'Salir',
 
+  'common.letsGo': '¡Vamos!',
+  'common.rules': 'Cómo jugar',
+
+  'nav.pvp': 'PvP · contra personas',
+  'nav.pve': 'PvE · contra el juego',
+  'nav.more': 'Más',
+
+  'home.runner': 'Corredor del metro',
+  'home.runnerHint': 'Esquiva el metro — solo, duelo o escuadra',
+  'home.online': 'Batalla en línea',
+  'home.onlineHint': 'Compite con un amigo en dos móviles',
+
+  'runner.chooseMode': 'Elige un modo',
+  'runner.mode.solo': 'Solo',
+  'runner.mode.soloHint': '1 jugador · supera tu récord',
+  'runner.mode.duel': 'Duelo',
+  'runner.mode.duelHint': '2 jugadores lado a lado',
+  'runner.mode.squad': 'Escuadra',
+  'runner.mode.squadHint': '3 jugadores en una pantalla',
+
+  'runner.rule.lane': 'Da un paso a un lado para cambiar de carril',
+  'runner.rule.jump': 'Salta sobre una barrera baja',
+  'runner.rule.crouch': 'Agáchate bajo una barrera alta',
+  'runner.rule.coins': 'Recoge monedas para puntos extra',
+  'runner.rule.livesSolo': 'Tres vidas — corre lo más lejos posible',
+  'runner.rule.livesRace': 'Tres vidas cada uno — gana el último en pie',
+
+  'runner.wins': '¡Gana {name}!',
+  'runner.draw': '¡Empate!',
+  'runner.pLabel': 'J{n}',
+
+  'battle.rules.title': 'Speed Battle',
+  'battle.rule.move': 'Muévete rápido — el movimiento amplio llena tu barra',
+  'battle.rule.fill': 'El primero al 100% gana la ronda',
+  'battle.rule.frame': 'Izquierda azul, derecha roja',
+
   'online.opponent': 'RIVAL',
   'online.oppOffline': 'Rival no conectado',
   'online.title': 'Batalla en línea',
@@ -659,6 +808,7 @@ const es: Dict = {
   'online.roleGuest': 'invitado',
   'online.copied': 'Copiado',
   'online.copy': 'Copiar',
+  'online.scanQr': 'Apunta el otro móvil aquí',
   'online.wait': 'Un momento…',
   'online.mirror': 'Espejo',
 }
@@ -674,6 +824,10 @@ const pt: Dict = {
   'home.beta': 'Beta',
   'home.betaHint': 'Modos experimentais',
   'home.footer': 'O celular é o controle. O show está na TV.',
+  'home.play': 'JOGAR',
+  'home.playSub': 'Partida rápida · 2 jogadores',
+  'music.on': 'Música ligada',
+  'music.off': 'Música desligada',
 
   'beta.title': 'Modos beta',
   'beta.subtitle': 'Ainda tosco — experimente.',
@@ -681,6 +835,8 @@ const pt: Dict = {
   'beta.onlineHint': 'Corra com um amigo em dois celulares',
   'beta.runner': 'Corredor · solo',
   'beta.runnerHint': 'Controle com o corpo, desvie do metrô',
+  'beta.spike': 'Ajuste de gestos',
+  'beta.spikeHint': 'Ferramenta de desenvolvimento: pista / pulo / agachar',
   'beta.badge': 'beta',
 
   'roster.title': 'Jogadores',
@@ -723,6 +879,13 @@ const pt: Dict = {
   'setup.combo': 'Combo',
   'setup.mode': 'Modo de jogo',
   'setup.mask': 'Máscaras',
+  'setup.sensitivity': 'Sensibilidade',
+  'sens.low': 'Baixa',
+  'sens.medium': 'Média',
+  'sens.high': 'Alta',
+  'setup.paceFast': 'Enchimento rápido',
+  'setup.paceNormal': 'Enchimento normal',
+  'setup.paceSlow': 'Enchimento lento',
 
   'gmode.classic': 'Clássico',
   'gmode.classicHint': 'O primeiro a encher a barra',
@@ -824,6 +987,42 @@ const pt: Dict = {
   'runner.again': 'De novo',
   'runner.exit': 'Sair',
 
+  'common.letsGo': 'Vamos!',
+  'common.rules': 'Como jogar',
+
+  'nav.pvp': 'PvP · contra pessoas',
+  'nav.pve': 'PvE · contra o jogo',
+  'nav.more': 'Mais',
+
+  'home.runner': 'Corredor do metrô',
+  'home.runnerHint': 'Desvie do metrô — solo, duelo ou esquadrão',
+  'home.online': 'Batalha online',
+  'home.onlineHint': 'Corra com um amigo em dois celulares',
+
+  'runner.chooseMode': 'Escolha um modo',
+  'runner.mode.solo': 'Solo',
+  'runner.mode.soloHint': '1 jogador · bata seu recorde',
+  'runner.mode.duel': 'Duelo',
+  'runner.mode.duelHint': '2 jogadores lado a lado',
+  'runner.mode.squad': 'Esquadrão',
+  'runner.mode.squadHint': '3 jogadores em uma tela',
+
+  'runner.rule.lane': 'Passo para o lado para trocar de pista',
+  'runner.rule.jump': 'Pule sobre a barreira baixa',
+  'runner.rule.crouch': 'Agache sob a barreira alta',
+  'runner.rule.coins': 'Junte moedas para pontos extras',
+  'runner.rule.livesSolo': 'Três vidas — corra o mais longe possível',
+  'runner.rule.livesRace': 'Três vidas cada — vence o último de pé',
+
+  'runner.wins': '{name} vence!',
+  'runner.draw': 'Empate!',
+  'runner.pLabel': 'J{n}',
+
+  'battle.rules.title': 'Speed Battle',
+  'battle.rule.move': 'Mova-se rápido — movimentos amplos enchem sua barra',
+  'battle.rule.fill': 'O primeiro a 100% vence a rodada',
+  'battle.rule.frame': 'Esquerda azul, direita vermelha',
+
   'online.opponent': 'ADVERSÁRIO',
   'online.oppOffline': 'Adversário não conectado',
   'online.title': 'Batalha online',
@@ -874,6 +1073,7 @@ const pt: Dict = {
   'online.roleGuest': 'convidado',
   'online.copied': 'Copiado',
   'online.copy': 'Copiar',
+  'online.scanQr': 'Aponte o outro celular aqui',
   'online.wait': 'Um instante…',
   'online.mirror': 'Espelho',
 }

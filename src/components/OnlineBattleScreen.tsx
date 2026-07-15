@@ -1,6 +1,7 @@
-import { ArrowLeft, Crown, LogIn, Plus, RefreshCw, Swords, WifiOff } from 'lucide-react'
+import { ArrowLeft, Crown, LogIn, Plus, RefreshCw, Share2, Swords, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
+import { MatchRecorder, shareClip, type MatchClip } from '../recorder'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { runCountdown } from '../countdown'
@@ -55,6 +56,22 @@ function inviteUrl(code: string): string {
   return `${origin}${pathname}#online?j=${encodeURIComponent(code)}`
 }
 
+/** The guest's reply link (carries the answer back to the host). */
+function answerUrl(code: string): string {
+  const { origin, pathname } = window.location
+  return `${origin}${pathname}#online?a=${encodeURIComponent(code)}`
+}
+
+/**
+ * Accept either a raw signaling code OR a pasted invite/answer LINK — so the
+ * friend can send whichever is handier and it just works, no "wrong thing
+ * pasted" foot-gun.
+ */
+function extractSignalCode(input: string): string {
+  const m = input.match(/[?&](?:j|a)=([^&\s]+)/)
+  return m ? decodeURIComponent(m[1]) : input.trim()
+}
+
 /**
  * Online battle — two phones, one shared obstacle stream.
  *
@@ -91,8 +108,12 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   const [oppFinal, setOppFinal] = useState<number | null>(null)
   /** The opponent dropped mid-match — their last heartbeat becomes the result. */
   const [oppLeft, setOppLeft] = useState(false)
+  /** Auto-recorded vertical highlight clip of my run. */
+  const [clip, setClip] = useState<MatchClip | null>(null)
+  const [sharing, setSharing] = useState(false)
 
   const connRef = useRef<OnlineConnection | null>(null)
+  const recorderRef = useRef(new MatchRecorder())
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const wakeLock = useWakeLock()
@@ -159,6 +180,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   useEffect(
     () => () => {
       cancelAnimationFrame(rafRef.current)
+      recorderRef.current.cancel()
       connRef.current?.close()
       stop()
     },
@@ -263,7 +285,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     setSignalBusy(true)
     setSignalError(null)
     try {
-      const code = await connRef.current!.acceptOffer(pasteInput)
+      const code = await connRef.current!.acceptOffer(extractSignalCode(pasteInput))
       setAnswerCode(code)
     } catch (e) {
       setSignalError(e instanceof Error ? e.message : String(e))
@@ -276,13 +298,35 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     setSignalBusy(true)
     setSignalError(null)
     try {
-      await connRef.current!.acceptAnswer(pasteInput)
+      await connRef.current!.acceptAnswer(extractSignalCode(pasteInput))
     } catch (e) {
       setSignalError(e instanceof Error ? e.message : String(e))
     } finally {
       setSignalBusy(false)
     }
   }
+
+  // Guest arriving via an invite link: auto-accept the host's offer the moment
+  // the camera is live — no manual "Next" tap. The answer is generated for them
+  // to send back; that return leg is the one hop a serverless handshake can't
+  // avoid, so it stays a one-tap Share / QR rather than a typed code.
+  const autoAcceptedRef = useRef(false)
+  useEffect(() => {
+    if (
+      role === 'guest' &&
+      status === 'running' &&
+      pasteInput.trim() &&
+      !answerCode &&
+      !signalBusy &&
+      !signalError &&
+      conn !== 'connected' &&
+      !autoAcceptedRef.current
+    ) {
+      autoAcceptedRef.current = true
+      void handleAcceptOffer()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, status, pasteInput, answerCode, signalBusy, signalError, conn])
 
   /* ---------------- Calibrate → start ---------------- */
 
@@ -329,6 +373,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     lastRef.current = performance.now()
     lastSentRef.current = 0
     wakeLock.acquire()
+    setClip(null)
+    if (overlayRef.current) recorderRef.current.start(overlayRef.current, sfx.captureStream())
     setOpp(OPPONENT_START)
     setOppLeft(false)
     setMyScore(0)
@@ -388,6 +434,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       setMyScore(score)
       setMyFinal(score)
       connRef.current?.send({ t: 'over', score, coins: g.coins })
+      void recorderRef.current.finish(1200).then((c) => setClip(c))
       setPhase('over')
       return
     }
@@ -396,6 +443,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
 
   const handleRematch = () => {
     // The connection persists — recalibrate and the host restarts with a new seed.
+    recorderRef.current.cancel()
+    setClip(null)
     setMyReady(false)
     setOppReady(false)
     setOpp(OPPONENT_START)
@@ -406,8 +455,19 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     setPhase('ready')
   }
 
+  const handleShareClip = async () => {
+    if (!clip || sharing) return
+    setSharing(true)
+    try {
+      await shareClip(clip)
+    } finally {
+      setSharing(false)
+    }
+  }
+
   const goBack = () => {
     cancelAnimationFrame(rafRef.current)
+    recorderRef.current.cancel()
     connRef.current?.close()
     stop()
     wakeLock.release()
@@ -566,7 +626,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
               {t('online.join')}
             </BigButton>
           </div>
-          <p className="max-w-xs text-center text-xs text-white/40">{t('online.menuHint')}</p>
+          <p className="max-w-xs text-center text-xs text-t3">{t('online.menuHint')}</p>
         </Screen>
       )}
 
@@ -578,12 +638,12 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
               {role === 'host' ? <Plus className="size-5 text-accent" /> : <LogIn className="size-5 text-accent" />}
               {role === 'host' ? t('online.create') : t('online.join')}
             </h1>
-            <p className="mb-4 flex items-center gap-2 text-xs text-white/45">
+            <p className="mb-4 flex items-center gap-2 text-xs text-t3">
               <CameraStatus status={status} /> · <ConnPill conn={conn} role={role} bare />
             </p>
 
             {status === 'error' && error && (
-              <div className="mb-4 rounded-xl bg-danger/85 px-4 py-3 text-sm">{error}</div>
+              <div className="mb-4 rounded-xl bg-danger/85 px-4 py-3 text-sm text-white">{error}</div>
             )}
 
             {role === 'host' && (
@@ -629,22 +689,26 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
                 <Step n={2} title={t('online.step2Guest')} done={conn === 'connected'}>
                   {answerCode ? (
                     <>
-                      <CodeShare code={answerCode} shareLabel={t('online.sendAnswer')} />
+                      <CodeShare
+                        code={answerCode}
+                        shareValue={answerUrl(answerCode)}
+                        shareLabel={t('online.sendAnswer')}
+                      />
                       <PendingLine text={t('online.waitHost')} spin />
                     </>
                   ) : (
-                    <p className="text-xs text-white/35">{t('online.afterStep1')}</p>
+                    <p className="text-xs text-t3">{t('online.afterStep1')}</p>
                   )}
                 </Step>
               </div>
             )}
 
             {signalError && (
-              <div className="mt-4 rounded-xl bg-danger/80 px-4 py-2.5 text-xs">{signalError}</div>
+              <div className="mt-4 rounded-xl bg-danger/80 px-4 py-2.5 text-xs text-white">{signalError}</div>
             )}
 
             {conn === 'failed' && (
-              <div className="mt-3 rounded-xl bg-white/5 px-4 py-3 text-xs text-white/60 ring-1 ring-white/10">
+              <div className="mt-3 rounded-xl border border-edge bg-card2 px-4 py-3 text-xs text-t2">
                 {t('online.directFail')}
               </div>
             )}
@@ -655,9 +719,9 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       {/* ---------------- Ready room (over the live camera) ---------------- */}
       {phase === 'ready' && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-end gap-4 bg-gradient-to-b from-black/30 via-transparent to-black/80 p-6 landscape:justify-center">
-          <div className="overlay-panel w-full max-w-sm rounded-3xl p-5 text-center">
+          <div className="overlay-panel w-full max-w-sm rounded-3xl p-5 text-center text-t1">
             <h1 className="mb-1 text-lg font-black">{t('online.warmup')}</h1>
-            <p className="text-sm text-white/70">{t('online.warmupHint')}</p>
+            <p className="text-sm text-t3">{t('online.warmupHint')}</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <ReadyChip label={t('online.me')} ready={myReady} />
               <ReadyChip label={t('online.opp')} ready={oppReady} />
@@ -731,6 +795,17 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
           </div>
 
           {oppLeft && <p className="-mt-2 text-sm text-white/50">{t('online.oppLeft')}</p>}
+
+          {clip && (
+            <BigButton
+              onClick={handleShareClip}
+              tone="light"
+              disabled={sharing}
+              icon={<Share2 className="size-5" />}
+            >
+              {t('over.share')}
+            </BigButton>
+          )}
 
           <div className="flex gap-3">
             <BigButton

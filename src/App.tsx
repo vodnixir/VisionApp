@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { music } from './audio/music'
 import { sfx } from './audio/sfx'
 import { createTournament, reportWinner, type Tournament } from './bracket'
 import { CalibrationOverlay } from './components/CalibrationOverlay'
 import { GameOverScreen } from './components/GameOverScreen'
 import { HomeScreen } from './components/HomeScreen'
+import { InstructionCard, type Rule } from './components/InstructionCard'
 import { MatchSetupScreen } from './components/MatchSetupScreen'
 import { RosterScreen } from './components/RosterScreen'
 import { ErrorOverlay, LoadingOverlay } from './components/StatusOverlay'
@@ -13,7 +15,7 @@ import type { EngineFrame, EngineHints } from './cv/engine'
 import { useGameState } from './hooks/useGameState'
 import { useWakeLock } from './hooks/useWakeLock'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
-import { useI18n } from './i18n'
+import { useI18n, type I18nKey } from './i18n'
 import { MatchRecorder, type MatchClip } from './recorder'
 import { recordSessionMatch } from './session'
 import { ShowCast, type CastStatus } from './show'
@@ -40,12 +42,23 @@ import {
   OVERTIME_DELTA,
   OVERTIME_MAX_MS,
   ROUND_DURATION_MS,
+  SENSITIVITY_FACTOR,
   comboMultiplier,
+  isEndless,
   isOvertimeTie,
   type GameSettings,
   type MatchMode,
   type MatchResults,
 } from './types'
+
+/** Pre-match briefing rules for the local duel. */
+function battleRules(t: (key: I18nKey, vars?: Record<string, string | number>) => string): Rule[] {
+  return [
+    { emoji: '⚡', text: t('battle.rule.move') },
+    { emoji: '🏁', text: t('battle.rule.fill') },
+    { emoji: '🎨', text: t('battle.rule.frame') },
+  ]
+}
 
 /** Both fighters must stay in frame this long before the countdown starts. */
 const LOCK_DURATION_MS = 3000
@@ -116,15 +129,20 @@ function createAccumulators(
   }
 }
 
-/** One freeze per ~30 s of round, spread over the middle of the match. */
-function generateFreezes(durationMs: number): FreezeWindow[] {
-  const count = Math.max(1, Math.round(durationMs / 30_000))
-  const spanStart = durationMs * 0.2
-  const segment = (durationMs * 0.65) / count
-  return Array.from({ length: count }, (_, i) => {
-    const start = spanStart + segment * i + Math.random() * Math.max(segment - FREEZE_WINDOW_MS, 0)
-    return { start, end: start + FREEZE_WINDOW_MS }
-  })
+/**
+ * The round is endless, so freezes are scheduled on a rolling ~22–36 s cadence
+ * from ~15 s in, out to a generous horizon (longer than any real living-room
+ * round). Offsets are from match start, in ms.
+ */
+const FREEZE_HORIZON_MS = 600_000
+function generateFreezes(): FreezeWindow[] {
+  const windows: FreezeWindow[] = []
+  let t = 15_000 + Math.random() * 8_000
+  while (t < FREEZE_HORIZON_MS) {
+    windows.push({ start: t, end: t + FREEZE_WINDOW_MS })
+    t += 22_000 + Math.random() * 14_000
+  }
+  return windows
 }
 
 export default function App() {
@@ -138,6 +156,8 @@ export default function App() {
   const [lockProgress, setLockProgress] = useState(0)
   const [hints, setHints] = useState<EngineHints>(NO_HINTS)
   const [showResults, setShowResults] = useState(false)
+  /** Pre-match rules briefing, shown between setup and calibration. */
+  const [showBattleRules, setShowBattleRules] = useState(false)
   const [clip, setClip] = useState<MatchClip | null>(null)
   const [tournament, setTournament] = useState<Tournament | null>(loadTournament)
   /** Which bracket match is being played right now (null = quick match). */
@@ -257,10 +277,15 @@ export default function App() {
       if (a.finished) return
       const target = g.settings.targetScore
       const mode = g.settings.matchMode
+      const endless = isEndless(mode)
       const rate = FILL_RATE[g.settings.roundMode]
       const durationMs = ROUND_DURATION_MS[g.settings.roundMode]
       const elapsed = frame.now - (g.matchStartedAt ?? frame.now)
       const remaining = durationMs - elapsed
+      // Endless modes never run out of clock — only a filled bar ends the round.
+      const timeUp = endless ? false : remaining <= 0
+      // Sensitivity scales the percent gained per movement (pre-match dial).
+      const sens = SENSITIVITY_FACTOR[g.settings.sensitivity]
       const speeds: [number, number] = [frame.players[0].speed, frame.players[1].speed]
 
       // "Freeze!" window (classic-mode modifier): moving now DRAINS your bar.
@@ -316,8 +341,10 @@ export default function App() {
         if (frozen) {
           a.progress[i] = Math.max(a.progress[i] - speed * rate * frame.dt, 0)
         } else {
+          // Sensitivity scales the gain per movement; penalties (burn) are not
+          // discounted, so an easier fill never softens a red-light mistake.
           a.progress[i] = Math.min(
-            Math.max(a.progress[i] + tick.fill[i] * a.comboMult[i] - tick.burn[i], 0),
+            Math.max(a.progress[i] + tick.fill[i] * a.comboMult[i] * sens - tick.burn[i], 0),
             target,
           )
         }
@@ -334,7 +361,9 @@ export default function App() {
       const matchHud = {
         mode: 'match' as const,
         progress: [toPercent(a.progress[0]), toPercent(a.progress[1])] as [number, number],
-        remainingMs: Math.max(0, remaining),
+        // Endless: the clock counts UP (elapsed) and never drives urgency.
+        remainingMs: endless ? elapsed : Math.max(0, remaining),
+        endless,
         frozen,
         combo: [a.comboMult[0], a.comboMult[1]] as [number, number],
         winnerIndex: null,
@@ -364,8 +393,6 @@ export default function App() {
         names: mode === 'boss' ? [`${names[0]} + ${names[1]}`, t('hud.boss')] : names,
         phase: 'playing',
       })
-
-      const timeUp = remaining <= 0
 
       // Co-op: the team races the clock, the boss "wins" on the buzzer.
       if (mode === 'boss') {
@@ -442,7 +469,7 @@ export default function App() {
     accumRef.current = createAccumulators(settings.handicap, settings.matchMode)
     // The freeze modifier belongs to classic; other modes bring their own rules.
     if (settings.freezeMode && settings.matchMode === 'classic') {
-      accumRef.current.freezes = generateFreezes(ROUND_DURATION_MS[settings.roundMode])
+      accumRef.current.freezes = generateFreezes()
     }
     setClip(null)
     if (canvasRef.current) {
@@ -456,6 +483,14 @@ export default function App() {
   useEffect(() => {
     prefetchEngine()
   }, [])
+
+  // Music bed follows the phase: the high-energy round track while calibrating
+  // or playing, the mellow menu groove everywhere else. play() is a no-op when
+  // muted and won't restart a track that's already sounding.
+  useEffect(() => {
+    const inRound = game.phase === 'CALIBRATION' || game.phase === 'PLAYING'
+    music.play(inRound ? 'round' : 'menu')
+  }, [game.phase])
 
   // Self-correcting countdown: each tick targets an absolute timestamp, so the
   // gong lands on the displayed "1 → GO" without setInterval drift.
@@ -581,6 +616,7 @@ export default function App() {
   const leaveArena = (to: 'HOME' | 'MATCH_SETUP' | 'TOURNAMENT') => {
     recorderRef.current.cancel()
     setClip(null)
+    setShowBattleRules(false)
     setPendingBracket(null)
     stop()
     wakeLock.release()
@@ -590,6 +626,7 @@ export default function App() {
 
   const handleStart = () => {
     sfx.unlock() // user gesture: unlocks audio; camera prompt follows
+    music.unlock()
     wakeLock.acquire()
     resetRoundState()
     saveLastPlayers(gameRef.current.settings.players)
@@ -599,7 +636,8 @@ export default function App() {
 
   const handleQuickStart = () => {
     setPendingBracket(null)
-    handleStart()
+    // Brief the players on the rules before the camera comes up.
+    setShowBattleRules(true)
   }
 
   const handleRematch = () => {
@@ -695,6 +733,18 @@ export default function App() {
           onSetPlayer={(index, slot) => dispatch({ type: 'SET_PLAYER', index, slot })}
           onStart={handleQuickStart}
           onBack={() => dispatch({ type: 'NAVIGATE', to: 'HOME' })}
+        />
+      )}
+
+      {game.phase === 'MATCH_SETUP' && showBattleRules && (
+        <InstructionCard
+          title={t('battle.rules.title')}
+          rules={battleRules(t)}
+          onStart={() => {
+            setShowBattleRules(false)
+            handleStart()
+          }}
+          onBack={() => setShowBattleRules(false)}
         />
       )}
 

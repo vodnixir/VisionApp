@@ -7,7 +7,10 @@ export interface HudState {
   mode: 'none' | 'match' | 'victory'
   /** 0..100 — percent of target score per player. */
   progress: [number, number]
+  /** Endless modes: elapsed (counts up). Timed (boss): remaining (counts down). */
   remainingMs: number
+  /** No round clock — the timer chip counts up and never turns urgent. */
+  endless?: boolean
   /** A "freeze!" window is active — moving drains the bar. */
   frozen: boolean
   /** Current combo fill multiplier per player (1 = no streak / mode off). */
@@ -243,7 +246,8 @@ export function drawMatchHud(
     ctx.stroke()
   }
 
-  const urgent = hud.overtime || hud.remainingMs <= 5_500
+  // Endless rounds count up and never turn urgent; only a real countdown does.
+  const urgent = !hud.endless && (hud.overtime || hud.remainingMs <= 5_500)
   const size = Math.round(timerH * 0.5)
   ctx.font = `${th.glow ? 900 : 700} ${size}px ${th.font}`
   ctx.textAlign = 'center'

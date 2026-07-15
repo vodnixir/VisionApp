@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
-import { Check, Copy, RefreshCw, Share2, Wifi, WifiOff } from 'lucide-react'
+import { Check, Copy, QrCode, RefreshCw, Share2, Wifi, WifiOff } from 'lucide-react'
 import { useI18n, type I18nKey } from '../../i18n'
 import { START_LIVES } from '../../runner/game'
 import type { ConnState, Role } from '../../online/net'
+import { Qr } from './Qr'
 
 /**
  * Presentational building blocks for the online-battle screen. They're all pure
@@ -35,11 +36,11 @@ export function Hero({
 }) {
   return (
     <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-      <div className="flex size-16 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-white/10">
+      <div className="flex size-16 items-center justify-center rounded-2xl bg-card2 ring-1 ring-edge">
         {icon}
       </div>
-      <h1 className="text-2xl font-black text-white">{title}</h1>
-      <p className="text-sm text-white/60">{subtitle}</p>
+      <h1 className="text-2xl font-black text-t1">{title}</h1>
+      <p className="text-sm text-t3">{subtitle}</p>
     </div>
   )
 }
@@ -61,8 +62,8 @@ export function BigButton({
 }) {
   const tones: Record<Tone, string> = {
     accent: 'bg-accent text-on-accent',
-    light: 'bg-white text-slate-900',
-    ghost: 'bg-white/10 text-white',
+    light: 'bg-chip text-onchip',
+    ghost: 'bg-card2 text-t2 ring-1 ring-edge',
   }
   return (
     <button
@@ -89,16 +90,16 @@ export function Step({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
+    <div className="rounded-2xl border border-edge bg-card p-4">
       <div className="mb-3 flex items-center gap-2.5">
         <span
           className={`flex size-6 items-center justify-center rounded-full text-xs font-black ${
-            done ? 'bg-accent text-on-accent' : 'bg-white/15 text-white'
+            done ? 'bg-accent text-on-accent' : 'bg-selbg text-t2'
           }`}
         >
           {done ? <Check className="size-3.5" /> : n}
         </span>
-        <span className="text-sm font-bold text-white">{title}</span>
+        <span className="text-sm font-bold text-t1">{title}</span>
       </div>
       {children}
     </div>
@@ -123,6 +124,7 @@ export function CodeShare({
   const { t } = useI18n()
   const payload = shareValue ?? code
   const [copied, setCopied] = useState(false)
+  const [showQr, setShowQr] = useState(false)
   const copy = () => {
     void navigator.clipboard?.writeText(payload).catch(() => {})
     setCopied(true)
@@ -141,7 +143,13 @@ export function CodeShare({
   }
   return (
     <div className="flex flex-col gap-2">
-      <div className="max-h-16 overflow-y-auto break-all rounded-lg bg-black/40 p-2 font-mono text-[10px] leading-relaxed text-white/50">
+      {showQr && (
+        <div className="flex flex-col items-center gap-1.5 py-1">
+          <Qr value={payload} size={180} />
+          <span className="text-[11px] text-t3">{t('online.scanQr')}</span>
+        </div>
+      )}
+      <div className="max-h-16 overflow-y-auto break-all rounded-lg border border-edge bg-card2 p-2 font-mono text-[10px] leading-relaxed text-t3">
         {code}
       </div>
       <div className="flex gap-2">
@@ -152,8 +160,17 @@ export function CodeShare({
           <Share2 className="size-4" /> {shareLabel}
         </button>
         <button
+          onClick={() => setShowQr((v) => !v)}
+          aria-pressed={showQr}
+          className={`flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold ring-1 ring-edge active:scale-95 ${
+            showQr ? 'bg-selbg text-t1' : 'bg-card2 text-t2'
+          }`}
+        >
+          <QrCode className="size-4" /> QR
+        </button>
+        <button
           onClick={copy}
-          className="flex items-center justify-center gap-1.5 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white active:scale-95"
+          className="flex items-center justify-center gap-1.5 rounded-full bg-card2 px-4 py-2 text-sm font-semibold text-t2 ring-1 ring-edge active:scale-95"
         >
           {copied ? <Check className="size-4 text-accent" /> : <Copy className="size-4" />}
           {copied ? t('online.copied') : t('online.copy')}
@@ -189,12 +206,12 @@ export function PasteRow({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         disabled={disabled}
-        className="h-16 w-full resize-none rounded-lg bg-black/40 p-2.5 font-mono text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
+        className="h-16 w-full resize-none rounded-lg border border-edge bg-card2 p-2.5 font-mono text-xs text-t1 placeholder:text-t3 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
       />
       <button
         onClick={onAction}
         disabled={busy || disabled || !value.trim()}
-        className="flex items-center justify-center gap-1.5 rounded-full bg-white px-5 py-2 text-sm font-black text-slate-900 active:scale-95 disabled:opacity-40"
+        className="flex items-center justify-center gap-1.5 rounded-full bg-chip px-5 py-2 text-sm font-black text-onchip active:scale-95 disabled:opacity-40"
       >
         {busy ? <RefreshCw className="size-4 animate-spin" /> : null}
         {busy ? t('online.wait') : action}
@@ -205,7 +222,7 @@ export function PasteRow({
 
 export function PendingLine({ text, spin }: { text: string; spin?: boolean }) {
   return (
-    <p className="mt-2 flex items-center gap-2 text-xs text-white/45">
+    <p className="mt-2 flex items-center gap-2 text-xs text-t3">
       <RefreshCw className={`size-3.5 ${spin ? 'animate-spin' : ''}`} /> {text}
     </p>
   )
@@ -215,11 +232,11 @@ export function PendingLine({ text, spin }: { text: string; spin?: boolean }) {
 export function ConnPill({ conn, role, bare }: { conn: ConnState; role: Role | null; bare?: boolean }) {
   const { t } = useI18n()
   const meta: Record<ConnState, { key: I18nKey; cls: string }> = {
-    new: { key: 'online.connNew', cls: 'text-white/50' },
+    new: { key: 'online.connNew', cls: 'text-t3' },
     connecting: { key: 'online.connConnecting', cls: 'text-gold' },
     connected: { key: 'online.connLive', cls: 'text-accent' },
     failed: { key: 'online.connFailed', cls: 'text-danger' },
-    closed: { key: 'online.connClosed', cls: 'text-white/50' },
+    closed: { key: 'online.connClosed', cls: 'text-t3' },
   }
   const s = meta[conn]
   const inner = (
@@ -268,7 +285,7 @@ export function ReadyChip({ label, ready }: { label: string; ready: boolean }) {
   return (
     <div
       className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold ${
-        ready ? 'bg-accent/20 text-accent' : 'bg-white/5 text-white/45'
+        ready ? 'bg-accent/20 text-accent' : 'bg-card2 text-t3'
       }`}
     >
       {ready ? <Check className="size-4" /> : <span className="size-2 rounded-full bg-current" />}

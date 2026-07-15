@@ -24,11 +24,13 @@ import {
   MATCH_MODES,
   ROUND_DURATION_MS,
   ROUND_MODES,
+  SENSITIVITIES,
   mirrorDefaultForLabel,
   type GameSettings,
   type MatchMode,
   type PlayerProfile,
   type PlayerSlot,
+  type RoundMode,
 } from '../types'
 
 const MODE_ICONS: Record<MatchMode, React.ReactNode> = {
@@ -37,6 +39,13 @@ const MODE_ICONS: Record<MatchMode, React.ReactNode> = {
   endurance: <Activity className="size-4" aria-hidden />,
   traffic: <TrafficCone className="size-4" aria-hidden />,
   boss: <Skull className="size-4" aria-hidden />,
+}
+
+/** Round mode now sets the fill PACE (the round is endless); boss keeps a clock. */
+const PACE_HINT: Record<RoundMode, 'setup.paceFast' | 'setup.paceNormal' | 'setup.paceSlow'> = {
+  sprint: 'setup.paceFast',
+  fight: 'setup.paceNormal',
+  marathon: 'setup.paceSlow',
 }
 
 interface Props {
@@ -159,8 +168,32 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
               >
                 <span className="block text-sm font-semibold sm:text-base">{t(`mode.${mode}`)}</span>
                 <span className="block text-[11px] opacity-70">
-                  {t('setup.seconds', { n: ROUND_DURATION_MS[mode] / 1000 })}
+                  {settings.matchMode === 'boss'
+                    ? t('setup.seconds', { n: ROUND_DURATION_MS[mode] / 1000 })
+                    : t(PACE_HINT[mode])}
                 </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-edge bg-card p-4">
+          <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+            {t('setup.sensitivity').toUpperCase()}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {SENSITIVITIES.map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => onPatch({ sensitivity: level })}
+                className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                  settings.sensitivity === level
+                    ? 'border-sel bg-selbg text-sel'
+                    : 'border-edge text-t2 hover:border-edge2'
+                }`}
+              >
+                {t(`sens.${level}`)}
               </button>
             ))}
           </div>

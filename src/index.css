@@ -39,6 +39,10 @@
   --tk-scrim: rgba(247, 247, 245, 0.85);
   --tk-panel: rgba(255, 255, 255, 0.9);
   --tk-font-brand: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  /* Party backdrop: keep dark text readable — mostly page colour over the video. */
+  --menu-scrim: rgba(247, 247, 245, 0.82);
+  --menu-glow-a: rgba(163, 230, 53, 0.3);
+  --menu-glow-b: rgba(0, 195, 255, 0.22);
 }
 
 :root[data-theme='dark'] {
@@ -63,6 +67,9 @@
   --tk-scrim: rgba(10, 10, 10, 0.85);
   --tk-panel: rgba(20, 20, 20, 0.9);
   --tk-font-brand: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --menu-scrim: rgba(10, 10, 10, 0.8);
+  --menu-glow-a: rgba(163, 230, 53, 0.22);
+  --menu-glow-b: rgba(130, 90, 255, 0.24);
 }
 
 :root[data-theme='neon'] {
@@ -87,6 +94,10 @@
   --tk-scrim: rgba(5, 6, 15, 0.85);
   --tk-panel: rgba(10, 12, 28, 0.85);
   --tk-font-brand: Orbitron, 'Segoe UI', system-ui, sans-serif;
+  /* Neon leans into the club look — let more of the video and glows through. */
+  --menu-scrim: rgba(5, 6, 15, 0.66);
+  --menu-glow-a: rgba(0, 195, 255, 0.38);
+  --menu-glow-b: rgba(255, 46, 99, 0.32);
 }
 
 /* Semantic utilities: bg-page, bg-card, border-edge, text-t1, bg-accent … */
@@ -232,4 +243,168 @@ body,
 
 .animate-winner-flash {
   animation: winner-flash 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+/* ---------- Party / club menu backdrop ---------- */
+
+.menu-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.menu-backdrop-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Tints the video toward the theme's page colour so text contrast survives. */
+.menu-backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 80% at 50% 0%, transparent, var(--menu-scrim) 78%),
+    linear-gradient(var(--menu-scrim), var(--menu-scrim));
+}
+
+/* Two big blurred neon blobs drift behind the menu for the club atmosphere. */
+.menu-backdrop-glow {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.9;
+  mix-blend-mode: screen;
+  will-change: transform;
+}
+
+.menu-backdrop-glow-a {
+  top: -22vmax;
+  left: -18vmax;
+  background: radial-gradient(circle, var(--menu-glow-a), transparent 62%);
+  animation: glow-drift-a 18s ease-in-out infinite alternate;
+}
+
+.menu-backdrop-glow-b {
+  bottom: -24vmax;
+  right: -20vmax;
+  background: radial-gradient(circle, var(--menu-glow-b), transparent 62%);
+  animation: glow-drift-b 22s ease-in-out infinite alternate;
+}
+
+@keyframes glow-drift-a {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(14vmax, 10vmax, 0) scale(1.25);
+  }
+}
+
+@keyframes glow-drift-b {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.1);
+  }
+  to {
+    transform: translate3d(-12vmax, -12vmax, 0) scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-backdrop-glow {
+    animation: none;
+  }
+}
+
+/* ---------- Massive neon PLAY button ---------- */
+
+.neon-play {
+  position: relative;
+  width: 100%;
+  border-radius: 1.75rem;
+  padding: 2rem 1.5rem;
+  border: none;
+  cursor: pointer;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  background: linear-gradient(120deg, #00c3ff, #a3e635, #ff2e63, #7c3aed, #00c3ff);
+  background-size: 300% 300%;
+  animation:
+    neon-play-slide 6s ease infinite,
+    neon-play-pulse 2.4s ease-in-out infinite;
+  transition: transform 0.12s ease;
+}
+
+.neon-play:active {
+  transform: scale(0.97);
+}
+
+/* Glassy sheen so the gradient reads as a lit surface, not flat fill. */
+.neon-play::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent 45%);
+  pointer-events: none;
+}
+
+.neon-play-label {
+  position: relative;
+  display: block;
+  font-size: clamp(2.75rem, 12vw, 4.5rem);
+  line-height: 1;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
+}
+
+.neon-play-sub {
+  position: relative;
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  opacity: 0.9;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes neon-play-slide {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes neon-play-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 22px rgba(0, 195, 255, 0.5),
+      0 0 60px rgba(255, 46, 99, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 34px rgba(163, 230, 53, 0.6),
+      0 0 90px rgba(124, 58, 237, 0.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-play {
+    animation: none;
+    background-position: 0% 50%;
+  }
 }

@@ -8,6 +8,7 @@ import {
   PlayerTracker,
   ROI_WARMUP_FRAMES,
   assignRoles,
+  assignRolesN,
   computeRoi,
   emaBBox,
   iou,
@@ -15,6 +16,7 @@ import {
   roiTouchesEdge,
   selectFighters,
   type BBox,
+  type Candidate,
   type RawPosture,
 } from './tracking'
 import {
@@ -29,7 +31,14 @@ import {
 
 export interface EngineConfig {
   mirror: boolean
-  names: [string, string]
+  /** Player captions, one per tracked slot (2 for the duel, up to 3 in Squad). */
+  names: string[]
+  /**
+   * How many people to track this session — the mode's "maxPoses". 2 keeps the
+   * original duel path byte-for-byte (ROI zoom + sticky locked roles); other
+   * counts drive the runner modes with simple positional assignment.
+   */
+  maxPlayers?: number
   /** Compute activity speed (only meaningful while a match runs). */
   scoring: boolean
   /** Draw brackets + labels on the canvas. */
@@ -129,8 +138,17 @@ export interface EngineFrame {
   /** Seconds since the previous inference frame (clamped). */
   dt: number
   presentCount: number
-  players: [EnginePlayerFrame, EnginePlayerFrame]
+  /** One entry per tracked slot (length = the mode's maxPlayers). */
+  players: EnginePlayerFrame[]
   hints: EngineHints
+}
+
+/** Extra identity colours for runner slots beyond the two duel colours. */
+const MULTI_PLAYER_COLORS = ['#00c3ff', '#ff2e63', '#a3e635']
+
+/** Player colour for slot i — the theme's duel colours for 0/1, lime for a 3rd. */
+function slotColor(i: number): string {
+  return playerColors()[i] ?? MULTI_PLAYER_COLORS[i % MULTI_PLAYER_COLORS.length]
 }
 
 /**
@@ -154,7 +172,7 @@ export interface EngineFrame {
 export class PoseEngine {
   private detector: poseDetection.PoseDetector | null = null
   private stream: MediaStream | null = null
-  private trackers: [PlayerTracker, PlayerTracker] = [new PlayerTracker(), new PlayerTracker()]
+  private trackers: PlayerTracker[] = [new PlayerTracker(), new PlayerTracker()]
   private running = false
   private destroyed = false
   private renderRaf = 0
@@ -392,10 +410,27 @@ export class PoseEngine {
       if (!this.running || this.destroyed) return
 
       const config = this.getConfig()
-      const fighters = selectFighters(poses)
-      const roles = config.rolesLocked
-        ? matchLockedRoles(this.trackers, fighters, now, vw, config.mirror)
-        : assignRoles(fighters, vw, config.mirror)
+      const maxPlayers = Math.max(1, Math.min(3, config.maxPlayers ?? 2))
+      // Grow/shrink the tracker pool to the mode's player count (a session sets
+      // this once; reconciling per frame is cheap and keeps switching robust).
+      while (this.trackers.length < maxPlayers) this.trackers.push(new PlayerTracker())
+      while (this.trackers.length > maxPlayers) this.trackers.pop()?.reset()
+
+      const fighters = selectFighters(poses, maxPlayers)
+      // Duel (2p) keeps its exact behaviour: sticky locked roles + positional
+      // calibration. Runner modes use plain left-to-right positional slots.
+      const roles: (Candidate | null)[] =
+        maxPlayers === 2
+          ? config.rolesLocked
+            ? matchLockedRoles(
+                [this.trackers[0], this.trackers[1]],
+                fighters,
+                now,
+                vw,
+                config.mirror,
+              )
+            : assignRoles(fighters, vw, config.mirror)
+          : assignRolesN(fighters, maxPlayers, vw, config.mirror)
 
       for (const tracker of this.trackers) tracker.age(now)
       roles.forEach((candidate, i) => {
@@ -405,7 +440,7 @@ export class PoseEngine {
         if (tracker.present && !tracker.visible) tracker.decay(dt)
       }
 
-      this.updateRoi(vw, vh)
+      this.updateRoi(vw, vh, maxPlayers)
       this.sampleLuma()
 
       // Kinetic feedback: a fast strike throws a neon burst off the moving wrist.
@@ -415,13 +450,13 @@ export class PoseEngine {
         this.maybeSpawnBurst(1, now, vw, config.mirror)
       }
 
-      const players = this.trackers.map((t) => ({
+      const players: EnginePlayerFrame[] = this.trackers.map((t) => ({
         present: t.present,
         visible: t.visible,
         bbox: t.bbox,
         speed: t.speed,
         posture: t.posture,
-      })) as [EnginePlayerFrame, EnginePlayerFrame]
+      }))
 
       this.onFrame({
         now,
@@ -466,10 +501,12 @@ export class PoseEngine {
     return poses
   }
 
-  /** Keep the crop region hugging both tracked players (smoothed). */
-  private updateRoi(vw: number, vh: number): void {
+  /** Keep the crop region hugging the tracked players (smoothed). */
+  private updateRoi(vw: number, vh: number, maxPlayers: number): void {
     const live = this.trackers.filter((t) => t.present && t.bbox).map((t) => t.bbox as BBox)
-    if (live.length !== 2) {
+    // Only zoom when everyone the mode expects is present — a partial crowd
+    // would crop someone out. For the duel that's the original "exactly 2" rule.
+    if (live.length !== maxPlayers) {
       this.roi = null
       this.roiWarmup = 0
       return
@@ -516,7 +553,8 @@ export class PoseEngine {
 
   private computeHints(videoHeight: number): EngineHints {
     const [a, b] = this.trackers
-    if (!a.present || !a.bbox || !b.present || !b.bbox) {
+    // Setup hints are a two-player concept; the runner modes ignore them.
+    if (!a || !b || !a.present || !a.bbox || !b.present || !b.bbox) {
       return this.lastLuma < DARK_LUMA ? { ...NO_HINTS, dark: true } : NO_HINTS
     }
     return {
@@ -534,7 +572,7 @@ export class PoseEngine {
    */
   private maybeSpawnBurst(index: 0 | 1, now: number, vw: number, mirror: boolean): void {
     const tracker = this.trackers[index]
-    if (tracker.speed < BURST_SPEED) return
+    if (!tracker || tracker.speed < BURST_SPEED) return
     if (now - this.lastBurstAt[index] < BURST_COOLDOWN_MS) return
     const wrist = tracker.activeWrist()
     if (!wrist) return
@@ -543,11 +581,13 @@ export class PoseEngine {
     const color = playerColors()[index]
     const cx = mirror ? vw - wrist.x : wrist.x
     const cy = wrist.y
-    // 8–12 sparks, a couple more the harder the strike.
-    const count = 8 + Math.round(Math.min(1, (tracker.speed - BURST_SPEED) / (1 - BURST_SPEED)) * 4)
+    // Intensity scales with how hard the strike is (its amplitude-gated speed):
+    // ~12 sparks at the threshold, up to ~20 for a full-extension blow.
+    const power = Math.min(1, (tracker.speed - BURST_SPEED) / (1 - BURST_SPEED))
+    const count = 12 + Math.round(power * 8)
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + Math.random() * 0.6
-      const speed = 2 + Math.random() * 3.5
+      const speed = 2.5 + Math.random() * (4 + power * 2)
       this.particles.push({
         x: cx,
         y: cy,
@@ -555,7 +595,7 @@ export class PoseEngine {
         vy: Math.sin(angle) * speed,
         alpha: 1,
         color,
-        size: 3 + Math.random() * 3,
+        size: 3 + Math.random() * (3 + power * 2),
       })
     }
   }
@@ -633,8 +673,9 @@ export class PoseEngine {
       const alpha = tracker.visible
         ? 1
         : Math.max(0.3, 1 - ((nowMs - tracker.lastSeenAtMs) / PERSISTENCE_MS) * 0.7)
-      drawBrackets(ctx, bbox, playerColors()[i], { alpha, speed: tracker.speed })
-      drawLabel(ctx, config.names[i], bbox, playerColors()[i], alpha, vw)
+      const color = slotColor(i)
+      drawBrackets(ctx, bbox, color, { alpha, speed: tracker.speed })
+      drawLabel(ctx, config.names[i] ?? '', bbox, color, alpha, vw)
       if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
         drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
       }
@@ -642,11 +683,13 @@ export class PoseEngine {
         const face = config.mirror
           ? { ...tracker.face, x: vw - tracker.face.x }
           : tracker.face
-        drawFaceMask(ctx, face, playerColors()[i], Math.max(alpha, 0.9))
+        drawFaceMask(ctx, face, color, Math.max(alpha, 0.9))
       }
     })
 
-    if (config.hud.mode === 'match') drawMatchHud(ctx, vw, vh, config.hud, config.names)
+    if (config.hud.mode === 'match') {
+      drawMatchHud(ctx, vw, vh, config.hud, [config.names[0] ?? '', config.names[1] ?? ''])
+    }
     else if (config.hud.mode === 'victory') drawVictorySplash(ctx, vw, vh, config.hud)
 
     // Hitmarkers on top of the HUD so a fast strike always reads.

@@ -24,7 +24,11 @@ import {
   mirrorDefaultForLabel,
 } from '../src/types'
 import {
+  AMPLITUDE_MAX_BONUS,
+  AMPLITUDE_MICRO_FACTOR,
   REBIND_WINDOW_MS,
+  amplitudeFactor,
+  assignRolesN,
   computeRoi,
   iou,
   matchLockedRoles,
@@ -120,6 +124,69 @@ ok('no shared keypoints → 0', () => {
   const prev: KpMap = new Map([['a', { x: 0, y: 0 }]])
   const curr: KpMap = new Map([['b', { x: 5, y: 5 }]])
   assert.equal(motionDelta(prev, curr, 100), 0)
+})
+
+console.log('amplitude anti-cheat')
+
+const H = 250 // body bbox height for the ratio
+
+ok('fists tucked at the chest (tiny reach) are discounted hard', () => {
+  // Right wrist ~10px from its shoulder → reach ratio 0.04, well under the floor.
+  const kp: KpMap = new Map([
+    ['right_wrist', { x: 0, y: 0 }],
+    ['right_shoulder', { x: 0, y: 10 }],
+  ])
+  assert.equal(amplitudeFactor(kp, H), AMPLITUDE_MICRO_FACTOR)
+})
+
+ok('a full-extension reach earns the top bonus', () => {
+  // Wrist 150px from the shoulder → ratio 0.6, past the max-reach threshold.
+  const kp: KpMap = new Map([
+    ['right_wrist', { x: 0, y: 0 }],
+    ['right_shoulder', { x: 0, y: 150 }],
+  ])
+  assert.equal(amplitudeFactor(kp, H), AMPLITUDE_MAX_BONUS)
+})
+
+ok('the wider of the two arms sets the reach, and it ramps monotonically', () => {
+  const micro: KpMap = new Map([
+    ['left_wrist', { x: 0, y: 0 }],
+    ['left_shoulder', { x: 0, y: 12 }],
+  ])
+  const mid: KpMap = new Map([
+    ['left_wrist', { x: 0, y: 0 }],
+    ['left_shoulder', { x: 0, y: 12 }],
+    // A wide right arm should dominate the tucked left one.
+    ['right_wrist', { x: 0, y: 0 }],
+    ['right_shoulder', { x: 0, y: 100 }],
+  ])
+  assert.ok(amplitudeFactor(mid, H) > amplitudeFactor(micro, H))
+})
+
+ok('no wrist+shoulder pair visible → neutral (never zeroes a legit mover)', () => {
+  const kp: KpMap = new Map([['right_wrist', { x: 0, y: 0 }]])
+  assert.equal(amplitudeFactor(kp, H), 1)
+})
+
+console.log('assignRolesN (runner Duel / Squad)')
+
+ok('N players get left-to-right slots regardless of detection order', () => {
+  const left = mkCand(100, 100, 100, 250) // anchorX 150
+  const mid = mkCand(400, 100, 100, 250) // anchorX 450
+  const right = mkCand(800, 100, 100, 250) // anchorX 850
+  const roles = assignRolesN([right, left, mid], 3, VW, false)
+  assert.equal(roles.length, 3)
+  assert.equal(roles[0], left, 'slot 0 = leftmost')
+  assert.equal(roles[1], mid, 'slot 1 = middle')
+  assert.equal(roles[2], right, 'slot 2 = rightmost')
+})
+
+ok('fewer people than slots leaves the extra slots empty', () => {
+  const only = mkCand(400, 100, 100, 250)
+  const roles = assignRolesN([only], 3, VW, false)
+  assert.equal(roles[0], only)
+  assert.equal(roles[1], null)
+  assert.equal(roles[2], null)
 })
 
 console.log('matchLockedRoles')

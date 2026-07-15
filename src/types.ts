@@ -50,6 +50,33 @@ export type MatchMode = 'classic' | 'rhythm' | 'endurance' | 'traffic' | 'boss'
 
 export const MATCH_MODES: MatchMode[] = ['classic', 'rhythm', 'endurance', 'traffic', 'boss']
 
+/**
+ * The base game and its variants now run ENDLESS — no clock, first to fill the
+ * bar to 100% wins. Only the co-op boss mode stays time-limited (the boss wins
+ * on the buzzer if the team hasn't finished it off), so the round timer applies
+ * to boss alone.
+ */
+export function isEndless(mode: MatchMode): boolean {
+  return mode !== 'boss'
+}
+
+/* ---------------- Movement sensitivity (pre-match) ---------------- */
+
+/**
+ * Sensitivity scales the bar fill per movement — a pre-match accessibility /
+ * difficulty dial. Low makes players work harder for every percent; high
+ * rewards the same effort more, good for little kids or a quick party round.
+ */
+export type Sensitivity = 'low' | 'medium' | 'high'
+
+export const SENSITIVITIES: Sensitivity[] = ['low', 'medium', 'high']
+
+export const SENSITIVITY_FACTOR: Record<Sensitivity, number> = {
+  low: 0.65,
+  medium: 1,
+  high: 1.5,
+}
+
 /* ---------------- Overtime (near-tie at the buzzer) ---------------- */
 
 /** Bars closer than this (percent) when time runs out → overtime. */
@@ -94,6 +121,8 @@ export interface GameSettings {
   freezeMode: boolean
   /** Streak multipliers (up to ×2) for CONTINUOUS movement. */
   comboMode: boolean
+  /** Movement sensitivity — scales the bar fill per movement (Low/Med/High). */
+  sensitivity: Sensitivity
   /** Flip the canvas horizontally (natural for players watching themselves on a TV). */
   mirrorMode: boolean
   /** Chosen camera deviceId; null = default front camera. */
@@ -114,6 +143,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   targetScore: 100,
   freezeMode: false,
   comboMode: true,
+  sensitivity: 'medium',
   mirrorMode: true,
   cameraId: null,
   maskMode: false,

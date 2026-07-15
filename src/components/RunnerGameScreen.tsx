@@ -1,10 +1,14 @@
+import { Share2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import type { EngineFrame } from '../cv/engine'
 import { runCountdown } from '../countdown'
+import { mulberry32, randomSeed } from '../online/protocol'
+import { MatchRecorder, shareClip, type MatchClip } from '../recorder'
 import { useRunnerControl } from '../runner/useRunnerControl'
+import { RUNNER_MODES, runnerModeSpec, type RunnerMode } from '../runner/modes'
 import {
   PLAYER_Z,
   createRunnerState,
@@ -16,52 +20,69 @@ import {
   type RunnerState,
 } from '../runner/game'
 import { drawScene, type Control } from '../runner/draw'
+import { InstructionCard, type Rule } from './InstructionCard'
 import { useI18n } from '../i18n'
 
 type Phase = 'idle' | 'calibrate' | 'countdown' | 'play' | 'over'
 
-interface Result {
+/** Fixed identity colours for the runner avatars (P1 cyan, P2 magenta, P3 lime). */
+const RUNNER_COLORS = ['#00c3ff', '#ff2e63', '#a3e635']
+
+interface PlayerResult {
+  index: number
   score: number
   coins: number
+}
+
+interface Result {
+  players: PlayerResult[]
+  /** Winner slot, or null for a draw / solo. */
+  winnerIndex: number | null
+  /** Solo-only: the stored best and whether this run beat it. */
   best: number
   isBest: boolean
 }
 
 /**
- * The single-player runner ("Subway Surfers in reality"), split-screen:
- *  - one panel is the metro world — a stylized 3-lane tunnel with a running
- *    avatar the player steers by stepping / jumping / crouching;
- *  - the other panel is the live camera with the player framed, so they see
- *    themselves driving it.
- * Camera stacks under the world in portrait, sits beside it in landscape.
+ * The body-driven Metro Runner, now Solo / Duel / Squad. Everyone runs their own
+ * avatar on the SAME seeded obstacle stream (mulberry32 shared seed), so a race
+ * is fair. The engine tracks `mode.players` bodies (its maxPoses); left-to-right
+ * people drive the left-to-right worlds via fixed pose slots.
  *
- * The world panel is a transparent canvas driven by its own rAF loop (smooth
- * 60 fps, decoupled from the ~30–40 Hz pose rate — gestures update a control
- * ref the loop reads). Reached at #runner.
+ * Layout: N metro worlds across the top, one shared camera strip below framing
+ * everyone. Each world is a transparent canvas driven by the single rAF loop
+ * that steps every player's state in lockstep. Reached at #runner.
  */
 export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const { t, lang } = useI18n()
+  const [mode, setMode] = useState<RunnerMode | null>(demo ? 'solo' : null)
+  const [showRules, setShowRules] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [count, setCount] = useState(3)
   const [mirror, setMirror] = useState(true)
   const [result, setResult] = useState<Result | null>(null)
   const [best, setBest] = useState(() => loadRunnerBest())
+  /** Auto-recorded vertical highlight clip, ready once the run ends. */
+  const [clip, setClip] = useState<MatchClip | null>(null)
+  const [sharing, setSharing] = useState(false)
 
-  const overlayRef = useRef<HTMLCanvasElement>(null)
-  const gameRef = useRef<RunnerState | null>(null)
+  const players = mode ? runnerModeSpec(mode).players : 1
+
+  const worldRefs = useRef<(HTMLCanvasElement | null)[]>([])
+  const gamesRef = useRef<RunnerState[]>([])
+  const flashRef = useRef<number[]>([])
   const rafRef = useRef(0)
   const lastRef = useRef(0)
-  const flashUntilRef = useRef(0)
+  const recorderRef = useRef(new MatchRecorder())
   const wakeLock = useWakeLock()
 
-  const { controlRef, reliable, calibrating, calibrated, beginCalibration, handleFrame } =
-    useRunnerControl({
-      mirror,
-      onCalibrated: () => {
-        setCount(3)
-        setPhase('countdown')
-      },
-    })
+  // Rules of hooks: always create MAX_PLAYERS controls, each pinned to a fixed
+  // pose slot; only the first `players` of them are used this session.
+  const c0 = useRunnerControl({ mirror, slotIndex: 0, onCalibrated: () => sfx.lock() })
+  const c1 = useRunnerControl({ mirror, slotIndex: 1, onCalibrated: () => sfx.lock() })
+  const c2 = useRunnerControl({ mirror, slotIndex: 2, onCalibrated: () => sfx.lock() })
+  const controls = [c0, c1, c2]
+  const active = controls.slice(0, players)
 
   // The frame handler needs canvasRef (returned below) — route through a ref.
   const onFrameRef = useRef<(frame: EngineFrame) => void>(() => {})
@@ -70,19 +91,25 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   )
 
   onFrameRef.current = (frame: EngineFrame) => {
-    handleFrame(frame, canvasRef.current?.width ?? 0)
+    const w = canvasRef.current?.width ?? 0
+    for (let i = 0; i < players; i++) controls[i].handleFrame(frame, w)
   }
 
+  // Engine tracks exactly `players` bodies; overlays frame each with a bracket.
   useEffect(() => {
-    // Overlays ON: the camera panel frames the player with a tracking bracket.
+    const names =
+      players === 1
+        ? [t('runner.you')]
+        : Array.from({ length: players }, (_, i) => t('runner.pLabel', { n: i + 1 }))
     configure({
       mirror,
+      maxPlayers: players,
       scoring: false,
       drawOverlays: true,
       rolesLocked: false,
-      names: [t('runner.you'), ''],
+      names,
     })
-  }, [mirror, configure, t, lang])
+  }, [mirror, players, configure, t, lang])
 
   // Camera came up → move to the calibration prompt.
   useEffect(() => {
@@ -91,14 +118,23 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
 
   // Demo mode (#runner-demo): no camera, an auto-player drives — straight to the run.
   useEffect(() => {
-    if (demo && phase === 'idle') {
+    if (demo && mode && phase === 'idle') {
       setCount(3)
       setPhase('countdown')
     }
-  }, [demo, phase])
+  }, [demo, mode, phase])
 
-  // Countdown 3 → 2 → 1 → GO, then start the run. Self-correcting so a busy
-  // main thread can't stretch the total (a plain setInterval drifts).
+  // Every active player has a fresh neutral baseline → start the countdown.
+  const allCalibrated = active.length > 0 && active.every((c) => c.calibrated)
+  useEffect(() => {
+    if (!demo && phase === 'calibrate' && allCalibrated) {
+      setCount(3)
+      setPhase('countdown')
+    }
+  }, [demo, phase, allCalibrated])
+
+  // Countdown 3 → 2 → 1 → GO, then start the run. Self-correcting so a busy main
+  // thread can't stretch the total.
   useEffect(() => {
     if (phase !== 'countdown') return
     return runCountdown({
@@ -120,60 +156,94 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   useEffect(
     () => () => {
       cancelAnimationFrame(rafRef.current)
+      recorderRef.current.cancel()
       stop()
     },
     [stop],
   )
 
   const startRun = () => {
-    gameRef.current = createRunnerState()
-    flashUntilRef.current = 0
+    // One shared seed → identical obstacles for every runner (fair race).
+    const seed = randomSeed()
+    gamesRef.current = Array.from({ length: players }, () => createRunnerState(mulberry32(seed)))
+    flashRef.current = Array.from({ length: players }, () => 0)
     lastRef.current = performance.now()
     wakeLock.acquire()
+    setClip(null)
+    // Record the metro world into a vertical highlight clip (P1's view in a
+    // race). The camera-free demo has no run worth sharing, so skip it there.
+    const worldCanvas = worldRefs.current[0]
+    if (!demo && worldCanvas) {
+      recorderRef.current.start(worldCanvas, sfx.captureStream())
+    }
     setPhase('play')
     rafRef.current = requestAnimationFrame(loop)
   }
 
   const loop = (now: number) => {
-    const g = gameRef.current
-    const cv = overlayRef.current
-    if (!g || !cv) return
-    if (cv.width !== cv.clientWidth || cv.height !== cv.clientHeight) {
-      cv.width = cv.clientWidth
-      cv.height = cv.clientHeight
-    }
+    const games = gamesRef.current
+    if (games.length === 0) return
     const dt = Math.min((now - lastRef.current) / 1000, 0.05)
     lastRef.current = now
 
-    const c = demo ? demoBot(g) : controlRef.current
-    if (demo) controlRef.current = c
-    const ev = stepRunner(g, {
-      dt,
-      lane: c.lane,
-      airborne: c.airborne,
-      crouching: c.crouching,
-      nowMs: now,
-    })
-    if (ev.coin) sfx.tick()
-    if (ev.dodge) sfx.release()
-    if (ev.hit) {
-      flashUntilRef.current = now + 350
-      sfx.whistle()
+    for (let i = 0; i < games.length; i++) {
+      const g = games[i]
+      const cv = worldRefs.current[i]
+      if (!cv) continue
+      if (cv.width !== cv.clientWidth || cv.height !== cv.clientHeight) {
+        cv.width = cv.clientWidth
+        cv.height = cv.clientHeight
+      }
+      const c = demo ? demoBot(g) : controls[i].controlRef.current
+      if (demo) controls[i].controlRef.current = c
+      const ev = stepRunner(g, {
+        dt,
+        lane: c.lane,
+        airborne: c.airborne,
+        crouching: c.crouching,
+        nowMs: now,
+      })
+      if (ev.coin) sfx.tick()
+      if (ev.dodge) sfx.release()
+      if (ev.hit) {
+        flashRef.current[i] = now + 350
+        sfx.whistle()
+      }
+      const ctx = cv.getContext('2d')
+      if (ctx) drawScene(ctx, cv.width, cv.height, g, c, now < flashRef.current[i], now)
     }
 
-    const ctx = cv.getContext('2d')
-    if (ctx) drawScene(ctx, cv.width, cv.height, g, c, now < flashUntilRef.current, now)
-
-    if (ev.gameOver) {
-      sfx.victory()
-      const score = runnerScore(g)
-      const isBest = saveRunnerBest(score)
-      setBest(loadRunnerBest())
-      setResult({ score, coins: g.coins, best: loadRunnerBest(), isBest })
-      setPhase('over')
+    if (games.every((g) => g.over)) {
+      finishRun()
       return
     }
     rafRef.current = requestAnimationFrame(loop)
+  }
+
+  const finishRun = () => {
+    sfx.victory()
+    const games = gamesRef.current
+    const perPlayer: PlayerResult[] = games.map((g, i) => ({
+      index: i,
+      score: runnerScore(g),
+      coins: g.coins,
+    }))
+    let winnerIndex: number | null = null
+    let isBest = false
+    if (players === 1) {
+      const score = perPlayer[0].score
+      isBest = saveRunnerBest(score)
+      setBest(loadRunnerBest())
+    } else {
+      const top = Math.max(...perPlayer.map((p) => p.score))
+      const leaders = perPlayer.filter((p) => p.score === top)
+      winnerIndex = leaders.length === 1 ? leaders[0].index : null
+    }
+    setResult({ players: perPlayer, winnerIndex, best: loadRunnerBest(), isBest })
+    // The world freezes on the final frame; keep recording a short tail so the
+    // clip ends on it, then hand back the shareable highlight.
+    void recorderRef.current.finish(1200).then((c) => setClip(c))
+    setPhase('over')
   }
 
   const handleStart = () => {
@@ -182,14 +252,40 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     void start()
   }
 
+  const beginCalibration = () => {
+    for (const c of active) c.beginCalibration()
+  }
+
+  const handlePickMode = (m: RunnerMode) => {
+    setMode(m)
+    setShowRules(true)
+  }
+
+  const handleRulesStart = () => {
+    setShowRules(false)
+    if (!demo && status === 'idle') handleStart()
+  }
+
+  const handleShareClip = async () => {
+    if (!clip || sharing) return
+    setSharing(true)
+    try {
+      await shareClip(clip)
+    } finally {
+      setSharing(false)
+    }
+  }
+
   const handleAgain = () => {
+    recorderRef.current.cancel()
+    setClip(null)
     setResult(null)
     if (demo) {
       setCount(3)
       setPhase('countdown')
       return
     }
-    if (calibrated) {
+    if (allCalibrated) {
       setCount(3)
       setPhase('countdown')
     } else {
@@ -199,11 +295,94 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
 
   const goBack = () => {
     cancelAnimationFrame(rafRef.current)
+    recorderRef.current.cancel()
     stop()
     wakeLock.release()
     window.location.hash = ''
     window.location.reload()
   }
+
+  const backToModes = () => {
+    cancelAnimationFrame(rafRef.current)
+    recorderRef.current.cancel()
+    stop()
+    for (const c of controls) c.reset()
+    wakeLock.release()
+    setClip(null)
+    setResult(null)
+    setShowRules(false)
+    setPhase('idle')
+    setMode(null)
+  }
+
+  /* ---------------- Mode select ---------------- */
+
+  if (!mode) {
+    return (
+      <div className="screen relative flex h-full w-full flex-col items-center overflow-y-auto bg-page px-4 py-8 text-t1 select-none">
+        <div className="flex w-full max-w-md flex-1 flex-col gap-4">
+          <header className="flex items-center justify-between">
+            <button
+              onClick={goBack}
+              className="rounded-full border border-edge bg-card px-4 py-2 text-sm font-semibold text-t2 transition-colors hover:text-t1"
+            >
+              ← {t('common.back')}
+            </button>
+            {best > 0 && (
+              <span className="text-sm font-semibold text-dot">{t('runner.record', { n: best })}</span>
+            )}
+          </header>
+
+          <div className="mt-2 text-center">
+            <h1 className="text-3xl font-black">{t('runner.title')}</h1>
+            <p className="mt-1 text-sm text-t3">{t('runner.chooseMode')}</p>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-3">
+            {RUNNER_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => handlePickMode(m.id)}
+                className="flex items-center gap-4 rounded-2xl border border-edge bg-card px-5 py-4 text-left transition-colors hover:border-edge2"
+              >
+                <span className="text-3xl" aria-hidden>
+                  {m.emoji}
+                </span>
+                <span className="flex flex-col">
+                  <span className="text-lg font-bold">{t(m.labelKey)}</span>
+                  <span className="text-xs text-t3">{t(m.hintKey)}</span>
+                </span>
+                <span
+                  className="ml-auto flex gap-1"
+                  aria-hidden
+                >
+                  {Array.from({ length: m.players }, (_, i) => (
+                    <span
+                      key={i}
+                      className="size-2.5 rounded-full"
+                      style={{ background: RUNNER_COLORS[i] }}
+                    />
+                  ))}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  /* ---------------- Rules / game ---------------- */
+
+  const modeSpec = runnerModeSpec(mode)
+  const rules: Rule[] = [
+    { emoji: '↔️', text: t('runner.rule.lane') },
+    { emoji: '⬆️', text: t('runner.rule.jump') },
+    { emoji: '⬇️', text: t('runner.rule.crouch') },
+    { emoji: '🪙', text: t('runner.rule.coins') },
+    { emoji: '❤️', text: players === 1 ? t('runner.rule.livesSolo') : t('runner.rule.livesRace') },
+  ]
 
   const chromeVisible = phase === 'idle' || phase === 'calibrate'
 
@@ -211,38 +390,52 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     <div className="relative h-full w-full overflow-hidden bg-slate-950 text-white select-none">
       <video ref={videoRef} className="hidden" playsInline muted />
 
-      {/* Split: metro world + player camera. */}
-      <div className="flex h-full w-full flex-col landscape:flex-row">
-        {/* Metro world */}
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <canvas ref={overlayRef} className="absolute inset-0 h-full w-full" />
+      {/* Worlds row + shared camera strip. */}
+      <div className="flex h-full w-full flex-col">
+        <div className="flex min-h-0 flex-1">
+          {Array.from({ length: players }, (_, i) => (
+            <div
+              key={i}
+              className="relative min-h-0 min-w-0 flex-1 overflow-hidden border-white/10 [&:not(:first-child)]:border-l-2"
+            >
+              <canvas
+                ref={(el) => {
+                  worldRefs.current[i] = el
+                }}
+                className="absolute inset-0 h-full w-full"
+              />
+              <div
+                className="absolute left-2 top-2 rounded-full px-2.5 py-1 text-[11px] font-black tracking-wider backdrop-blur"
+                style={{ background: 'rgba(0,0,0,0.55)', color: RUNNER_COLORS[i] }}
+              >
+                {players === 1 ? t('runner.you') : t('runner.pLabel', { n: i + 1 })}
+              </div>
+              {phase === 'play' && !demo && !controls[i].reliable && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+                  <div className="rounded-lg bg-red-600/85 px-3 py-1 text-[11px] font-semibold">
+                    {t('runner.inFrame')}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
 
-        {/* Player camera, framed */}
-        <div className="relative min-h-0 flex-1 overflow-hidden border-t-2 border-white/10 landscape:border-l-2 landscape:border-t-0">
+        {/* Shared player camera, framing everyone. */}
+        <div className="relative h-2/5 min-h-0 overflow-hidden border-t-2 border-white/10 landscape:h-1/3">
           {demo ? (
             <div className="absolute inset-0 bg-gradient-to-b from-slate-700 to-slate-900" />
           ) : (
             <canvas ref={canvasRef} className="absolute inset-0 h-full w-full object-cover" />
           )}
-          <div className="pointer-events-none absolute inset-2 rounded-xl ring-2 ring-white/25" />
-          <div className="absolute left-3 top-3 rounded-full bg-black/55 px-3 py-1 text-xs font-black tracking-widest backdrop-blur">
-            {t('runner.you')}
-          </div>
-          {phase === 'play' && !reliable && !demo && (
-            <div className="absolute inset-x-0 bottom-3 flex justify-center">
-              <div className="rounded-lg bg-red-600/85 px-4 py-1.5 text-xs font-semibold">
-                {t('runner.inFrame')}
-              </div>
-            </div>
-          )}
+          <div className="pointer-events-none absolute inset-2 rounded-xl ring-2 ring-white/20" />
         </div>
       </div>
 
       {/* Top bar */}
       <div className="absolute inset-x-0 top-0 z-30 flex items-center justify-between p-3">
         <button
-          onClick={goBack}
+          onClick={backToModes}
           className="rounded-full bg-black/60 px-4 py-2 text-sm font-semibold backdrop-blur"
         >
           ← {t('common.back')}
@@ -264,15 +457,25 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
         </div>
       )}
 
+      {/* Pre-game rules briefing */}
+      {showRules && (
+        <InstructionCard
+          title={t('runner.title')}
+          subtitle={t(modeSpec.labelKey)}
+          rules={rules}
+          onStart={handleRulesStart}
+          onBack={backToModes}
+        />
+      )}
+
       {/* Idle / calibrate chrome */}
-      {chromeVisible && (
+      {!showRules && chromeVisible && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/45 p-8 backdrop-blur-sm">
           <div className="max-w-sm rounded-2xl bg-black/70 px-6 py-5 text-center">
             <h1 className="mb-2 text-2xl font-black">{t('runner.title')}</h1>
-            <p className="text-sm text-white/75">{t('runner.howto')}</p>
-            {best > 0 && (
-              <p className="mt-2 text-sm font-semibold text-lime-400">{t('runner.record', { n: best })}</p>
-            )}
+            <p className="text-sm text-white/75">
+              {players === 1 ? t('runner.howto') : t('runner.rule.livesRace')}
+            </p>
           </div>
           {status === 'idle' && (
             <button
@@ -288,13 +491,31 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
             </div>
           )}
           {status === 'running' && (
-            <button
-              onClick={beginCalibration}
-              disabled={calibrating}
-              className="rounded-full bg-white px-8 py-4 text-lg font-black text-black disabled:opacity-50"
-            >
-              {calibrating ? t('runner.holdStill') : t('runner.ready')}
-            </button>
+            <div className="flex flex-col items-center gap-3">
+              {players > 1 && (
+                <div className="flex gap-2">
+                  {active.map((c, i) => (
+                    <span
+                      key={i}
+                      className="rounded-full px-3 py-1 text-xs font-bold"
+                      style={{
+                        background: c.reliable ? RUNNER_COLORS[i] : 'rgba(255,255,255,0.15)',
+                        color: c.reliable ? '#000' : '#fff',
+                      }}
+                    >
+                      {t('runner.pLabel', { n: i + 1 })}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={beginCalibration}
+                disabled={active.some((c) => c.calibrating)}
+                className="rounded-full bg-white px-8 py-4 text-lg font-black text-black disabled:opacity-50"
+              >
+                {active.some((c) => c.calibrating) ? t('runner.holdStill') : t('runner.ready')}
+              </button>
+            </div>
           )}
           {status === 'error' && error && (
             <div className="max-w-sm rounded-xl bg-red-600/85 px-5 py-3 text-center text-sm font-semibold">
@@ -309,14 +530,56 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-5 bg-black/72 p-8 backdrop-blur">
           <div className="text-center">
             <div className="text-sm uppercase tracking-widest text-white/60">{t('runner.runOver')}</div>
-            <div className="mt-1 text-7xl font-black tabular-nums">{result.score}</div>
-            <div className="mt-1 text-sm text-white/70">{t('runner.coins', { n: result.coins })}</div>
-            {result.isBest ? (
-              <div className="mt-2 text-lg font-black text-lime-400">{t('runner.newRecord')}</div>
+            {players === 1 ? (
+              <>
+                <div className="mt-1 text-7xl font-black tabular-nums">{result.players[0].score}</div>
+                <div className="mt-1 text-sm text-white/70">
+                  {t('runner.coins', { n: result.players[0].coins })}
+                </div>
+                {result.isBest ? (
+                  <div className="mt-2 text-lg font-black text-lime-400">{t('runner.newRecord')}</div>
+                ) : (
+                  <div className="mt-2 text-sm text-white/60">{t('runner.record', { n: result.best })}</div>
+                )}
+              </>
             ) : (
-              <div className="mt-2 text-sm text-white/60">{t('runner.record', { n: result.best })}</div>
+              <>
+                <div className="mt-1 text-3xl font-black">
+                  {result.winnerIndex === null
+                    ? t('runner.draw')
+                    : t('runner.wins', { name: t('runner.pLabel', { n: result.winnerIndex + 1 }) })}
+                </div>
+                <div className="mt-4 flex flex-col gap-2">
+                  {[...result.players]
+                    .sort((a, b) => b.score - a.score)
+                    .map((p) => (
+                      <div
+                        key={p.index}
+                        className="flex items-center justify-between gap-6 rounded-xl bg-white/10 px-4 py-2"
+                      >
+                        <span
+                          className="text-sm font-bold"
+                          style={{ color: RUNNER_COLORS[p.index] }}
+                        >
+                          {t('runner.pLabel', { n: p.index + 1 })}
+                        </span>
+                        <span className="tabular-nums text-lg font-black">{p.score}</span>
+                      </div>
+                    ))}
+                </div>
+              </>
             )}
           </div>
+          {clip && (
+            <button
+              onClick={handleShareClip}
+              disabled={sharing}
+              className="flex items-center gap-2 rounded-full bg-white/10 px-6 py-3 text-base font-bold ring-1 ring-white/20 disabled:opacity-50"
+            >
+              <Share2 className="size-4" aria-hidden />
+              {t('over.share')}
+            </button>
+          )}
           <div className="flex gap-3">
             <button
               onClick={handleAgain}
@@ -325,7 +588,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
               {t('runner.again')}
             </button>
             <button
-              onClick={goBack}
+              onClick={backToModes}
               className="rounded-full bg-white/15 px-6 py-4 text-lg font-semibold"
             >
               {t('runner.exit')}
@@ -361,4 +624,3 @@ function demoBot(state: RunnerState): Control {
     crouching: target.type === 'duck' && close,
   }
 }
-

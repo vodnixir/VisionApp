@@ -20,6 +20,12 @@ const NEUTRAL_CONTROL: Control = { lane: 0, airborne: false, crouching: false }
 export interface UseRunnerControlOptions {
   /** Mirror the horizontal axis (the video is shown mirrored → step-right reads +). */
   mirror: boolean
+  /**
+   * Which tracked player slot this control follows. Undefined = the first
+   * present body (solo / online). In Duel / Squad each player pins a fixed slot
+   * (0,1,2) so left-to-right people drive left-to-right runners.
+   */
+  slotIndex?: number
   /** Detection thresholds. The spike tunes these live; the games use the default. */
   config?: GestureConfig
   /** Fired once a calibration completes with a usable baseline. */
@@ -69,6 +75,8 @@ export function useRunnerControl(opts: UseRunnerControlOptions): RunnerControl {
   // Live-updated refs so the frame callback never captures stale props.
   const mirrorRef = useRef(opts.mirror)
   mirrorRef.current = opts.mirror
+  const slotIndexRef = useRef(opts.slotIndex)
+  slotIndexRef.current = opts.slotIndex
   const configRef = useRef<GestureConfig>(opts.config ?? DEFAULT_GESTURE_CONFIG)
   configRef.current = opts.config ?? DEFAULT_GESTURE_CONFIG
   const onCalibratedRef = useRef(opts.onCalibrated)
@@ -96,7 +104,13 @@ export function useRunnerControl(opts: UseRunnerControlOptions): RunnerControl {
   }, [])
 
   const handleFrame = useCallback((frame: EngineFrame, canvasWidth: number) => {
-    const player = frame.players.find((p) => p.present && p.posture)
+    const slot = slotIndexRef.current
+    const player =
+      slot === undefined
+        ? frame.players.find((p) => p.present && p.posture)
+        : frame.players[slot]?.present && frame.players[slot]?.posture
+          ? frame.players[slot]
+          : undefined
     // Only re-render when the reliability actually flips.
     setReliable((prev) => (prev === Boolean(player) ? prev : Boolean(player)))
     if (!player || !player.posture) return
