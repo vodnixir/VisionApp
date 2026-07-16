@@ -9,8 +9,11 @@
  *   2. a light progress heartbeat (both ways, ~5/s) so each side can paint the
  *      opponent's score/lives next to their video.
  *
- * There is NO server: the WebRTC handshake is exchanged as a one-off text code
- * the players paste to each other (see packSignal/unpackSignal + net.ts).
+ * There is NO signaling server: the FIRST WebRTC handshake is exchanged as a
+ * one-off text code the players paste to each other (see packSignal/unpackSignal
+ * + net.ts). That first offer carries the data channel only — keeping its SDP
+ * small enough to fit a scannable QR — so the camera is attached afterwards by
+ * renegotiating over the channel itself ({ t: 'sdp' } below).
  */
 
 /* ---------------- Seeded RNG (shared obstacle stream) ---------------- */
@@ -52,6 +55,12 @@ export type NetMessage =
   | { t: 'state'; distance: number; coins: number; lives: number; over: boolean; score: number }
   /** Final result when a run ends. */
   | { t: 'over'; score: number; coins: number }
+  /**
+   * Renegotiation offer/answer, exchanged over the OPEN data channel when a side
+   * attaches its camera after connecting. Handled inside net.ts — the game layer
+   * never sees these.
+   */
+  | { t: 'sdp'; sdp: RTCSessionDescriptionInit }
 
 /* ---------------- Signaling code (paste-to-a-friend) ---------------- */
 

@@ -1,18 +1,29 @@
 /**
- * WebRTC peer wrapper for the online battle — one camera track out, one data
- * channel for game state, and a copy-paste handshake (no signaling server).
+ * WebRTC peer wrapper for the online battle — one data channel for game state,
+ * one camera track each way, and a copy-paste handshake (no signaling server).
  *
- * Handshake (host and guest each add their camera track FIRST, so the media is
- * part of the very first offer/answer):
- *   host:  createOffer() → code ──▶ (chat) ──▶ guest.acceptOffer(code) → answer code
- *   host.acceptAnswer(answerCode) ◀── (chat) ◀── guest
- * Once the answer lands the data channel opens and both sides are connected.
+ * The first handshake carries the DATA CHANNEL ONLY:
+ *   host:  createOffer() → code ──▶ (chat/QR) ──▶ guest.acceptOffer(code) → answer code
+ *   host.acceptAnswer(answerCode) ◀── (chat/QR) ◀── guest
  *
- * ICE is non-trickle: we wait for gathering to finish (bounded by a timeout) so
- * every candidate is baked into the single SDP the code carries. STUN alone only
- * works on friendly networks (same simple Wi-Fi); a TURN relay — configured via
- * VITE_TURN_* env vars at build time — is what makes phones on different
- * networks (mobile data, CGNAT, symmetric NAT) actually connect.
+ * Why no camera in that first offer: a video m-line drags in the whole codec
+ * list (VP8/VP9/H264 profiles, rtx, fmtp) and inflates the SDP ~5.5× — 6.3 KB vs
+ * 1.1 KB — which pushed the packed code to ~2.3 KB and made the QR far too dense
+ * for a camera to read. Data-channel-only lands around 880 chars, which scans.
+ *
+ * So the camera is attached AFTER the channel opens (attachCamera), by
+ * renegotiating over the channel itself: onnegotiationneeded → { t: 'sdp' } →
+ * peer applies it and answers the same way. BUNDLE means this reuses the
+ * existing ICE transport, so no second candidate gathering happens. Glare (both
+ * sides attaching at once) is handled by the standard perfect-negotiation
+ * pattern — the host is impolite, the guest is polite.
+ *
+ * The first handshake's ICE is non-trickle: we wait for gathering to finish
+ * (bounded by a timeout) so every candidate is baked into the single SDP the
+ * code carries. STUN alone only works on friendly networks (same simple Wi-Fi);
+ * a TURN relay — configured via VITE_TURN_* env vars at build time — is what
+ * makes phones on different networks (mobile data, CGNAT, symmetric NAT)
+ * actually connect.
  */
 import { packSignal, unpackSignal, type NetMessage } from './protocol'
 
@@ -51,18 +62,37 @@ const ICE_SERVERS: RTCIceServer[] = [
     : []),
 ]
 /**
- * Cap on waiting for ICE gathering — some browsers never emit 'complete'.
+ * Hard cap on waiting for ICE gathering — some browsers never emit 'complete'.
  * Generous on purpose: cutting it short bakes an incomplete candidate set into
  * the one-shot SDP code (there is no trickle to recover with), and slow mobile
  * links can take several seconds to produce their relay candidates.
  */
 const ICE_TIMEOUT_MS = 8000
+/**
+ * Gathering rarely reports 'complete' promptly — it waits on every configured
+ * TURN URL, including transports that just time out, which stalled the invite
+ * code for the full 8 s. Once we hold the candidates that actually decide
+ * connectivity (a server-reflexive for direct P2P and a relay for when that
+ * fails), the rest add nothing, so we settle after a short grace for stragglers.
+ */
+const ICE_SETTLE_MS = 700
 
 export class OnlineConnection {
   readonly role: Role
   private pc: RTCPeerConnection
   private channel: RTCDataChannel | null = null
   private cb: NetCallbacks
+  /**
+   * Perfect negotiation state. Renegotiation only ever runs over the open data
+   * channel, so it stays out of the way of the manual first handshake.
+   */
+  private renegotiating = false
+  private makingOffer = false
+  private cameraAttached = false
+  /** The impolite peer wins a glare; the polite one rolls back. */
+  private get polite(): boolean {
+    return this.role === 'guest'
+  }
 
   constructor(role: Role, cb: NetCallbacks) {
     this.role = role
@@ -83,6 +113,21 @@ export class OnlineConnection {
       else if (s === 'connecting') this.cb.onState?.('connecting')
     }
 
+    // Adding the camera later fires this. It must stay inert until the channel
+    // is open, or it would race the manual first handshake.
+    this.pc.onnegotiationneeded = async () => {
+      if (!this.renegotiating) return
+      try {
+        this.makingOffer = true
+        await this.pc.setLocalDescription()
+        this.sendRaw({ t: 'sdp', sdp: this.pc.localDescription!.toJSON() })
+      } catch {
+        /* the peer may have vanished mid-renegotiation */
+      } finally {
+        this.makingOffer = false
+      }
+    }
+
     // The host opens the channel; the guest receives it.
     if (role === 'host') {
       this.bindChannel(this.pc.createDataChannel('game', { ordered: true }))
@@ -91,9 +136,40 @@ export class OnlineConnection {
     }
   }
 
-  /** Add the local camera track so it rides in the first offer/answer. */
-  addLocalStream(stream: MediaStream): void {
-    for (const track of stream.getVideoTracks()) this.pc.addTrack(track, stream)
+  /**
+   * Send the local camera to the peer. Safe to call once the channel is open —
+   * it renegotiates over the channel rather than touching the pasted codes.
+   */
+  attachCamera(stream: MediaStream): void {
+    if (this.cameraAttached || !this.renegotiating) return
+    const tracks = stream.getVideoTracks()
+    if (tracks.length === 0) return
+    this.cameraAttached = true
+    // addTrack fires onnegotiationneeded, which ships the offer over the channel.
+    for (const track of tracks) this.pc.addTrack(track, stream)
+  }
+
+  /** Whether the local camera has already been negotiated to the peer. */
+  get hasCamera(): boolean {
+    return this.cameraAttached
+  }
+
+  /** Apply a renegotiation offer/answer that arrived over the channel. */
+  private async onRemoteSdp(sdp: RTCSessionDescriptionInit): Promise<void> {
+    // Perfect negotiation: if both sides offered at once, the impolite peer
+    // ignores the incoming offer and lets its own stand.
+    const collision =
+      sdp.type === 'offer' && (this.makingOffer || this.pc.signalingState !== 'stable')
+    if (collision && !this.polite) return
+    try {
+      await this.pc.setRemoteDescription(sdp)
+      if (sdp.type === 'offer') {
+        await this.pc.setLocalDescription()
+        this.sendRaw({ t: 'sdp', sdp: this.pc.localDescription!.toJSON() })
+      }
+    } catch {
+      /* a rolled-back or stale description — the next negotiation recovers */
+    }
   }
 
   /** Host step 1 — produce the offer code to send to the friend. */
@@ -124,10 +200,15 @@ export class OnlineConnection {
 
   /** Send a game-state message (dropped silently if the channel isn't open). */
   send(msg: NetMessage): void {
+    this.sendRaw(msg)
+  }
+
+  private sendRaw(msg: NetMessage): void {
     if (this.channel?.readyState === 'open') this.channel.send(JSON.stringify(msg))
   }
 
   close(): void {
+    this.renegotiating = false
     this.channel?.close()
     this.pc.getSenders().forEach((s) => s.track?.stop())
     this.pc.close()
@@ -135,31 +216,67 @@ export class OnlineConnection {
 
   private bindChannel(channel: RTCDataChannel): void {
     this.channel = channel
-    channel.onopen = () => this.cb.onState?.('connected')
+    channel.onopen = () => {
+      // From here on the channel can carry SDP, so the camera may be attached.
+      this.renegotiating = true
+      this.cb.onState?.('connected')
+    }
     channel.onmessage = (e) => {
+      let msg: NetMessage
       try {
-        this.cb.onMessage?.(JSON.parse(e.data as string) as NetMessage)
+        msg = JSON.parse(e.data as string) as NetMessage
       } catch {
-        /* ignore malformed frames */
+        return // ignore malformed frames
       }
+      // Renegotiation is transport business — the game layer never sees it.
+      if (msg.t === 'sdp') {
+        void this.onRemoteSdp(msg.sdp)
+        return
+      }
+      this.cb.onMessage?.(msg)
     }
   }
 
+  /**
+   * Collect ICE candidates for the one-shot code. Settles as soon as the useful
+   * ones are in (see ICE_SETTLE_MS) rather than always burning the hard cap.
+   */
   private waitIce(): Promise<void> {
     if (this.pc.iceGatheringState === 'complete') return Promise.resolve()
     return new Promise((resolve) => {
       let done = false
+      let settle: ReturnType<typeof setTimeout> | null = null
+      let sawSrflx = false
+      let sawRelay = false
+
       const finish = () => {
         if (done) return
         done = true
-        this.pc.removeEventListener('icegatheringstatechange', check)
+        if (settle) clearTimeout(settle)
+        clearTimeout(hardStop)
+        this.pc.removeEventListener('icegatheringstatechange', onGathering)
+        this.pc.removeEventListener('icecandidate', onCandidate)
         resolve()
       }
-      const check = () => {
+
+      // Enough to connect: a reflexive address for direct P2P, plus a relay for
+      // when the NAT refuses it. Without TURN there is no relay to wait for.
+      const enough = () => sawSrflx && (sawRelay || !TURN_CONFIGURED)
+
+      const onCandidate = (e: RTCPeerConnectionIceEvent) => {
+        const c = e.candidate?.candidate
+        if (!c) return // null candidate = gathering finished
+        if (c.includes('typ srflx')) sawSrflx = true
+        else if (c.includes('typ relay')) sawRelay = true
+        if (enough() && !settle) settle = setTimeout(finish, ICE_SETTLE_MS)
+      }
+      const onGathering = () => {
         if (this.pc.iceGatheringState === 'complete') finish()
       }
-      this.pc.addEventListener('icegatheringstatechange', check)
-      setTimeout(finish, ICE_TIMEOUT_MS)
+
+      this.pc.addEventListener('icecandidate', onCandidate)
+      this.pc.addEventListener('icegatheringstatechange', onGathering)
+      const hardStop = setTimeout(finish, ICE_TIMEOUT_MS)
     })
   }
 }

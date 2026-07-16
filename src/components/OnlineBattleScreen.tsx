@@ -188,16 +188,17 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     })
   }, [mirror, configure, t, lang])
 
-  // Once the camera is live, hand its track to the peer connection (must happen
-  // before the offer/answer is created so the media is negotiated in).
+  // The camera is NOT part of the pasted handshake (that would bloat the code
+  // and wreck the QR). Once the channel is open and the camera is live, hand the
+  // track over — net.ts renegotiates it across the open channel.
   useEffect(() => {
-    if (status !== 'running' || trackAddedRef.current) return
+    if (conn !== 'connected' || status !== 'running' || trackAddedRef.current) return
     const stream = videoRef.current?.srcObject as MediaStream | null
     if (stream && connRef.current) {
-      connRef.current.addLocalStream(stream)
+      connRef.current.attachCamera(stream)
       trackAddedRef.current = true
     }
-  }, [status, videoRef])
+  }, [conn, status, videoRef])
 
   // Teardown. Resetting the latches alongside the connection keeps the invite
   // flow correct under StrictMode's simulated remount in dev: a fresh mount
@@ -272,9 +273,10 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialInvite])
 
-  // Host: as soon as the camera track is in, mint the offer code to share.
+  // Host: mint the offer code immediately — it no longer waits on the camera,
+  // so the invite is ready to share while the camera is still warming up.
   useEffect(() => {
-    if (phase !== 'signal' || role !== 'host' || !trackAddedRef.current || offerCode) return
+    if (phase !== 'signal' || role !== 'host' || offerCode) return
     let cancelled = false
     void connRef.current
       ?.createOffer()
@@ -285,9 +287,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     return () => {
       cancelled = true
     }
-    // trackAddedRef flips imperatively; status is the observable proxy for it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, role, status, offerCode])
+  }, [phase, role, offerCode])
 
   // Connection established → move on to calibration.
   useEffect(() => {
@@ -335,15 +335,14 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     }
   }
 
-  // Guest arriving via an invite link: auto-accept the host's offer the moment
-  // the camera is live — no manual "Next" tap. The answer is generated for them
-  // to send back; that return leg is the one hop a serverless handshake can't
-  // avoid, so it stays a one-tap Share / QR rather than a typed code.
+  // Guest arriving via an invite link: auto-accept the host's offer right away —
+  // no manual "Next" tap, and no waiting on the camera (it isn't part of the
+  // handshake any more). The answer is generated for them to send back; that
+  // return leg is the one hop a serverless handshake can't avoid.
   const autoAcceptedRef = useRef(false)
   useEffect(() => {
     if (
       role === 'guest' &&
-      status === 'running' &&
       pasteInput.trim() &&
       !answerCode &&
       !signalBusy &&
@@ -355,7 +354,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       void handleAcceptOffer()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, status, pasteInput, answerCode, signalBusy, signalError, conn])
+  }, [role, pasteInput, answerCode, signalBusy, signalError, conn])
 
   /* ---------------- Calibrate → start ---------------- */
 
@@ -720,7 +719,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
                     onChange={setPasteInput}
                     placeholder={t('online.invitePlaceholder')}
                     busy={signalBusy}
-                    disabled={Boolean(answerCode) || status !== 'running'}
+                    disabled={Boolean(answerCode)}
                     action={t('online.next')}
                     onAction={handleAcceptOffer}
                   />

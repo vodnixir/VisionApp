@@ -147,7 +147,7 @@ export function CodeShare({
     <div className="flex flex-col gap-2">
       {showQr && (
         <div className="flex flex-col items-center gap-1.5 py-1">
-          <Qr value={qrValue ?? payload} size={180} />
+          <Qr value={qrValue ?? payload} size={320} />
           <span className="text-[11px] text-t3">{t('online.scanQr')}</span>
         </div>
       )}
