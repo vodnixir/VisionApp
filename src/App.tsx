@@ -52,13 +52,44 @@ import {
   type MatchResults,
 } from './types'
 
-/** Pre-match briefing rules for the local duel. */
-function battleRules(t: (key: I18nKey, vars?: Record<string, string | number>) => string): Rule[] {
-  return [
-    { emoji: '⚡', text: t('battle.rule.move') },
-    { emoji: '🏁', text: t('battle.rule.fill') },
-    { emoji: '🎨', text: t('battle.rule.frame') },
-  ]
+/** Pre-match briefing rules — tailored to the chosen mode so the card actually
+ *  teaches how THAT mode is played (the traffic-light card, say, must warn that
+ *  moving on red burns your bar — the opposite of the generic "move fast"). */
+function battleRules(
+  t: (key: I18nKey, vars?: Record<string, string | number>) => string,
+  mode: MatchMode,
+): Rule[] {
+  const fill: Rule = { emoji: '🏁', text: t('battle.rule.fill') }
+  const frame: Rule = { emoji: '🎨', text: t('battle.rule.frame') }
+  switch (mode) {
+    case 'rhythm':
+      return [
+        { emoji: '🎵', text: t('rules.rhythm.beat') },
+        { emoji: '🎯', text: t('rules.rhythm.miss') },
+        frame,
+      ]
+    case 'endurance':
+      return [
+        { emoji: '🏃', text: t('rules.endurance.pace') },
+        { emoji: '🥵', text: t('rules.endurance.stop') },
+        fill,
+      ]
+    case 'traffic':
+      return [
+        { emoji: '🟢', text: t('rules.traffic.green') },
+        { emoji: '🔴', text: t('rules.traffic.red') },
+        fill,
+      ]
+    case 'boss':
+      return [
+        { emoji: '🤝', text: t('rules.boss.team') },
+        { emoji: '💥', text: t('rules.boss.attack') },
+        { emoji: '⏱️', text: t('rules.boss.timer') },
+      ]
+    case 'classic':
+    default:
+      return [{ emoji: '⚡', text: t('battle.rule.move') }, fill, frame]
+  }
 }
 
 /** Both fighters must stay in frame this long before the countdown starts. */
@@ -687,7 +718,9 @@ export default function App() {
           : {}),
       },
     })
-    handleStart()
+    // Brief the players on the mode's rules before the camera comes up — the
+    // same card quick matches get (bracket matches used to skip it).
+    setShowBattleRules(true)
   }
 
   const handleContinueTournament = () => {
@@ -752,15 +785,21 @@ export default function App() {
         />
       )}
 
-      {game.phase === 'MATCH_SETUP' && showBattleRules && (
+      {/* Mode-specific pre-match briefing — shown for both quick matches
+          (MATCH_SETUP) and tournament brackets (TOURNAMENT). */}
+      {showBattleRules && (
         <InstructionCard
-          title={t('battle.rules.title')}
-          rules={battleRules(t)}
+          title={t(`gmode.${settings.matchMode}` as I18nKey)}
+          subtitle={t(`gmode.${settings.matchMode}Hint` as I18nKey)}
+          rules={battleRules(t, settings.matchMode)}
           onStart={() => {
             setShowBattleRules(false)
             handleStart()
           }}
-          onBack={() => setShowBattleRules(false)}
+          onBack={() => {
+            setShowBattleRules(false)
+            setPendingBracket(null)
+          }}
         />
       )}
 
