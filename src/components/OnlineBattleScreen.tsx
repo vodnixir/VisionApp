@@ -124,14 +124,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   /** The opponent dropped mid-match — their last heartbeat becomes the result. */
   const [oppLeft, setOppLeft] = useState(false)
   /** Auto-recorded vertical highlight clip of my run. */
-  const {
-    status: clipStatus,
-    sharing,
-    shareError,
-    capture: captureClip,
-    reset: resetClip,
-    share: handleShareClip,
-  } = useMatchClip()
+  const clipShare = useMatchClip()
+  const { capture: captureClip, reset: resetClip } = clipShare
 
   const connRef = useRef<OnlineConnection | null>(null)
   const recorderRef = useRef(new MatchRecorder())
@@ -453,6 +447,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       flashUntilRef.current = now + 350
       sfx.whistle()
     }
+    // Highlight signal — a crash beats a dodge beats a coin.
+    recorderRef.current.mark(hit ? 1 : dodge ? 0.7 : coin ? 0.4 : 0.05)
 
     // Heartbeat the opponent (throttled).
     if (now - lastSentRef.current >= STATE_EVERY_MS) {
@@ -839,13 +835,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
 
           {oppLeft && <p className="-mt-2 text-sm text-white/50">{t('online.oppLeft')}</p>}
 
-          <ClipShare
-            status={clipStatus}
-            sharing={sharing}
-            shareError={shareError}
-            onShare={handleShareClip}
-            tone="dark"
-          />
+          <ClipShare state={clipShare} tone="dark" />
 
           <div className="flex gap-3">
             <BigButton

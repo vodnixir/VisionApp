@@ -16,7 +16,16 @@ import {
   createModeState,
   modeTick,
 } from '../src/modes'
-import { PORTRAIT_H, PORTRAIT_W, coverCrop, portraitLayout } from '../src/recorder'
+import {
+  HIGHLIGHT_TARGET_MS,
+  PORTRAIT_H,
+  PORTRAIT_W,
+  coverCrop,
+  endingWindow,
+  pickHighlights,
+  portraitLayout,
+  type ActivitySample,
+} from '../src/recorder'
 import {
   COMBO_TIERS,
   comboMultiplier,
@@ -324,6 +333,46 @@ ok('portraitLayout of an already-portrait source fills the frame', () => {
   assert.equal(l.h, PORTRAIT_H)
   assert.equal(l.x, 0)
   assert.equal(l.y, 0)
+})
+
+console.log('highlight picking')
+
+/** A calm timeline with a livelier burst over [hotFrom, hotTo). */
+function timeline(durationMs: number, hotFrom: number, hotTo: number): ActivitySample[] {
+  const out: ActivitySample[] = []
+  for (let t = 0; t < durationMs; t += 100) out.push({ t, a: t >= hotFrom && t < hotTo ? 1 : 0.1 })
+  return out
+}
+
+ok('a recording at or under the target needs no cutting', () => {
+  const samples = timeline(15_000, 0, 5_000)
+  assert.deepEqual(pickHighlights(samples, 15_000), [])
+  assert.deepEqual(pickHighlights([], 60_000), [])
+})
+
+ok('highlights land on the liveliest stretch and hit the target length', () => {
+  // 60s match, all the action between 30s and 50s.
+  const picked = pickHighlights(timeline(60_000, 30_000, 50_000), 60_000)
+  assert.ok(picked.length > 0, 'something was picked')
+  const total = picked.reduce((s, w) => s + (w.end - w.start), 0)
+  assert.ok(total >= HIGHLIGHT_TARGET_MS, `covers the target (got ${total})`)
+  // Everything chosen sits inside the hot stretch.
+  for (const w of picked) {
+    assert.ok(w.start >= 30_000 && w.end <= 50_000, `window ${w.start}-${w.end} is in the action`)
+  }
+})
+
+ok('highlight windows come back in order, merged, never overlapping', () => {
+  const picked = pickHighlights(timeline(90_000, 20_000, 45_000), 90_000)
+  for (let i = 1; i < picked.length; i++) {
+    assert.ok(picked[i].start > picked[i - 1].end, 'ordered and merged')
+  }
+  for (const w of picked) assert.ok(w.end > w.start, 'window has length')
+})
+
+ok('the ending window is the tail, and vanishes on short clips', () => {
+  assert.deepEqual(endingWindow(60_000, 15_000), [{ start: 45_000, end: 60_000 }])
+  assert.deepEqual(endingWindow(10_000, 15_000), [])
 })
 
 console.log('combo multiplier')

@@ -190,14 +190,8 @@ export default function App() {
   const [showResults, setShowResults] = useState(false)
   /** Pre-match rules briefing, shown between setup and calibration. */
   const [showBattleRules, setShowBattleRules] = useState(false)
-  const {
-    status: clipStatus,
-    sharing: clipSharing,
-    shareError: clipShareError,
-    capture: captureClip,
-    reset: resetClip,
-    share: shareClipNow,
-  } = useMatchClip()
+  const clipShare = useMatchClip()
+  const { capture: captureClip, reset: resetClip } = clipShare
   const [tournament, setTournament] = useState<Tournament | null>(loadTournament)
   /** Which bracket match is being played right now (null = quick match). */
   const [pendingBracket, setPendingBracket] = useState<{ round: number; index: number } | null>(null)
@@ -351,6 +345,10 @@ export default function App() {
       }
 
       a.time += frame.dt
+      // How lively this instant was, for the highlight cut: both players going
+      // at once is what makes a moment worth keeping.
+      recorderRef.current.mark((speeds[0] + speeds[1]) / 2)
+
       for (const i of [0, 1] as const) {
         const speed = speeds[i]
 
@@ -816,10 +814,7 @@ export default function App() {
       {game.phase === 'GAME_OVER' && game.results && showResults && (
         <GameOverScreen
           results={game.results}
-          clipStatus={clipStatus}
-          sharing={clipSharing}
-          shareError={clipShareError}
-          onShare={shareClipNow}
+          clip={clipShare}
           onNext={handleRematch}
           onChangePlayers={() => leaveArena('MATCH_SETUP')}
           onHome={() => leaveArena('HOME')}

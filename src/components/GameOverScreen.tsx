@@ -3,14 +3,11 @@ import { useI18n } from '../i18n'
 import { playerColorsUI } from '../theme'
 import type { MatchResults } from '../types'
 import { ClipShare } from './ClipShare'
-import type { ClipStatus } from '../hooks/useMatchClip'
+import type { MatchClipState } from '../hooks/useMatchClip'
 
 interface Props {
   results: MatchResults
-  clipStatus: ClipStatus
-  sharing: boolean
-  shareError: boolean
-  onShare: () => void
+  clip: MatchClipState
   onNext: () => void
   onChangePlayers: () => void
   onHome: () => void
@@ -24,10 +21,7 @@ interface Props {
  */
 export function GameOverScreen({
   results,
-  clipStatus,
-  sharing,
-  shareError,
-  onShare,
+  clip,
   onNext,
   onChangePlayers,
   onHome,
@@ -95,12 +89,7 @@ export function GameOverScreen({
         ))}
       </div>
 
-      <ClipShare
-        status={clipStatus}
-        sharing={sharing}
-        shareError={shareError}
-        onShare={onShare}
-      />
+      <ClipShare state={clip} />
 
       <div className="flex w-full max-w-xl flex-col gap-2.5">
         {onContinueTournament ? (

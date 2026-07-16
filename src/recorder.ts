@@ -16,6 +16,94 @@ export interface MatchClip {
   blob: Blob
   /** File extension matching the actual container ('mp4' | 'webm'). */
   ext: string
+  /** How long the recording ran, ms. */
+  durationMs: number
+  /** How lively the match was over time — drives the highlight cut. */
+  activity: ActivitySample[]
+}
+
+/** One reading of "how much was happening", taken while recording. */
+export interface ActivitySample {
+  /** ms since recording started. */
+  t: number
+  /** Liveliness, roughly 0..1 — each screen defines its own signal. */
+  a: number
+}
+
+/** A slice of a recording, in ms from its start. */
+export interface ClipWindow {
+  start: number
+  end: number
+}
+
+/** How much highlight footage to aim for. */
+export const HIGHLIGHT_TARGET_MS = 20_000
+/** How much of the finish to keep for the "ending" cut. */
+export const ENDING_MS = 15_000
+/** Granularity of the highlight search — long enough for a moment to read. */
+const WINDOW_MS = 2500
+/** Activity is sampled at ~10 Hz; finer buys nothing for picking windows. */
+const SAMPLE_EVERY_MS = 100
+
+/**
+ * Pick the liveliest ~`targetMs` of a recording, as time-ordered windows.
+ *
+ * Slices the timeline into fixed windows, ranks them by mean activity, takes the
+ * best until the target is met, then puts them back in chronological order and
+ * merges neighbours (so a long exciting stretch stays one continuous shot rather
+ * than becoming visible seams).
+ *
+ * Returns [] when the recording is already at or under the target — the caller
+ * should then just use the whole thing instead of pointlessly re-encoding it.
+ */
+export function pickHighlights(
+  samples: ActivitySample[],
+  durationMs: number,
+  targetMs = HIGHLIGHT_TARGET_MS,
+): ClipWindow[] {
+  if (durationMs <= targetMs || samples.length === 0) return []
+
+  const count = Math.floor(durationMs / WINDOW_MS)
+  if (count === 0) return []
+
+  const scored: { start: number; end: number; score: number }[] = []
+  for (let i = 0; i < count; i++) {
+    const start = i * WINDOW_MS
+    const end = Math.min(start + WINDOW_MS, durationMs)
+    let sum = 0
+    let n = 0
+    for (const s of samples) {
+      if (s.t >= start && s.t < end) {
+        sum += s.a
+        n++
+      }
+    }
+    scored.push({ start, end, score: n > 0 ? sum / n : 0 })
+  }
+
+  scored.sort((x, y) => y.score - x.score)
+  const chosen: ClipWindow[] = []
+  let total = 0
+  for (const w of scored) {
+    if (total >= targetMs) break
+    chosen.push({ start: w.start, end: w.end })
+    total += w.end - w.start
+  }
+
+  chosen.sort((x, y) => x.start - y.start)
+  const merged: ClipWindow[] = []
+  for (const w of chosen) {
+    const prev = merged[merged.length - 1]
+    if (prev && w.start <= prev.end) prev.end = Math.max(prev.end, w.end)
+    else merged.push({ ...w })
+  }
+  return merged
+}
+
+/** The closing `ENDING_MS` of a recording — the finish and the victory splash. */
+export function endingWindow(durationMs: number, lengthMs = ENDING_MS): ClipWindow[] {
+  if (durationMs <= lengthMs) return []
+  return [{ start: durationMs - lengthMs, end: durationMs }]
 }
 
 /** Portrait clip frame — TikTok's recommended 1080×1920. */
@@ -171,9 +259,28 @@ export class MatchRecorder {
   private composer: PortraitComposer | null = null
   private chunks: Blob[] = []
   private stopTimer: ReturnType<typeof setTimeout> | null = null
+  private samples: ActivitySample[] = []
+  private startedAt = 0
 
   get active(): boolean {
     return this.recorder !== null && this.recorder.state !== 'inactive'
+  }
+
+  /**
+   * Note how lively the game is right now (roughly 0..1) so the highlight cut
+   * has something to rank. Cheap enough to call every frame: readings are
+   * bucketed to ~10 Hz, keeping the peak of each bucket so a brief burst — the
+   * exact thing a highlight wants — isn't averaged away.
+   */
+  mark(activity: number): void {
+    if (!this.active) return
+    const t = performance.now() - this.startedAt
+    const last = this.samples[this.samples.length - 1]
+    if (last && t - last.t < SAMPLE_EVERY_MS) {
+      if (activity > last.a) last.a = activity
+      return
+    }
+    this.samples.push({ t, a: activity })
   }
 
   /** Release the capture tracks so the encoder pipeline shuts down promptly. */
@@ -190,6 +297,8 @@ export class MatchRecorder {
   /** Begin recording. Silently does nothing when the platform can't record. */
   start(canvas: HTMLCanvasElement, audio?: MediaStream | null): void {
     if (!recordingSupported() || this.active) return
+    this.samples = []
+    this.startedAt = performance.now()
     const composer = new PortraitComposer(canvas)
     composer.start()
     this.composer = composer
@@ -248,11 +357,18 @@ export class MatchRecorder {
         recorder.onstop = () => {
           const type = recorder.mimeType || 'video/webm'
           const blob = new Blob(this.chunks, { type })
+          const durationMs = performance.now() - this.startedAt
+          const activity = this.samples
           this.recorder = null
           this.chunks = []
+          this.samples = []
           this.releaseStream()
           this.stopComposer()
-          resolve(blob.size > 0 ? { blob, ext: type.includes('mp4') ? 'mp4' : 'webm' } : null)
+          resolve(
+            blob.size > 0
+              ? { blob, ext: type.includes('mp4') ? 'mp4' : 'webm', durationMs, activity }
+              : null,
+          )
         }
         try {
           recorder.stop()
@@ -285,6 +401,150 @@ export class MatchRecorder {
     }
     this.releaseStream()
     this.stopComposer()
+  }
+}
+
+/* ---------------- Cutting a recording down ---------------- */
+
+/** Resolve on the next `event` from `el`, or reject if it never comes. */
+function once(el: HTMLElement, event: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      el.removeEventListener(event, done)
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(() => {
+      el.removeEventListener(event, done)
+      reject(new Error(`timed out waiting for ${event}`))
+    }, timeoutMs)
+    el.addEventListener(event, done)
+  })
+}
+
+/**
+ * Let the video run until `untilS`, reporting progress as it goes.
+ *
+ * Polls on a timer rather than rAF on purpose: rAF stops in a backgrounded tab,
+ * which would hang the cut forever the moment someone switches apps mid-export.
+ * The time budget is the same guard for a decode that simply stalls.
+ */
+function playUntil(
+  video: HTMLVideoElement,
+  untilS: number,
+  onTick: (currentS: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const startedAt = performance.now()
+    const budgetMs = Math.max(0, untilS - video.currentTime) * 1000 + 8000
+    const iv = setInterval(() => {
+      if (video.currentTime >= untilS || video.ended) {
+        clearInterval(iv)
+        resolve()
+        return
+      }
+      if (performance.now() - startedAt > budgetMs) {
+        clearInterval(iv)
+        reject(new Error('playback stalled'))
+        return
+      }
+      onTick(video.currentTime)
+    }, 100)
+  })
+}
+
+type CapturableVideo = HTMLVideoElement & { captureStream?: () => MediaStream }
+
+/**
+ * Cut `windows` out of a recording into a new clip.
+ *
+ * A browser can't trim an encoded blob without shipping a transcoder, so this
+ * replays the recording and re-records just the wanted parts: seek to a window
+ * with the recorder paused, resume, play it through, pause again. Capturing the
+ * <video> element's own stream (rather than redrawing to a canvas) keeps the
+ * audio and costs nothing.
+ *
+ * Runs in REAL TIME — a 20 s highlight takes ~20 s — so callers must show
+ * progress. Returns null if the platform can't do it, rather than pretending.
+ */
+export async function extractSegments(
+  clip: MatchClip,
+  windows: ClipWindow[],
+  onProgress?: (fraction: number) => void,
+): Promise<MatchClip | null> {
+  if (!recordingSupported() || windows.length === 0) return null
+
+  const url = URL.createObjectURL(clip.blob)
+  const video = document.createElement('video') as CapturableVideo
+  video.src = url
+  video.playsInline = true
+  // Kept out of sight but NOT display:none — a hidden element may stop decoding.
+  video.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0'
+  document.body.appendChild(video)
+
+  const cleanup = () => {
+    video.pause()
+    video.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  try {
+    await once(video, 'loadedmetadata', 8000)
+    if (typeof video.captureStream !== 'function') return null
+    const stream = video.captureStream()
+
+    const mimeType = MIME_CANDIDATES.find((m) => MediaRecorder.isTypeSupported(m))
+    const chunks: Blob[] = []
+    let rec: MediaRecorder | null = null
+    const totalMs = windows.reduce((s, w) => s + (w.end - w.start), 0)
+    let doneMs = 0
+
+    for (const [i, w] of windows.entries()) {
+      if (rec) rec.pause()
+      video.currentTime = w.start / 1000
+      await once(video, 'seeked', 6000)
+
+      if (i === 0) {
+        // Start only once we're parked on the first frame we actually want.
+        rec = new MediaRecorder(stream, {
+          ...(mimeType ? { mimeType } : {}),
+          videoBitsPerSecond: 5_000_000,
+        })
+        rec.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data)
+        }
+        rec.start(500)
+      } else {
+        rec!.resume()
+      }
+
+      await video.play()
+      await playUntil(video, w.end / 1000, (cur) => {
+        onProgress?.(Math.min(1, (doneMs + (cur * 1000 - w.start)) / totalMs))
+      })
+      video.pause()
+      doneMs += w.end - w.start
+      onProgress?.(Math.min(1, doneMs / totalMs))
+    }
+
+    if (!rec) return null
+    const recorder = rec
+    const blob = await new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }))
+      recorder.stop()
+    })
+    if (blob.size === 0) return null
+    return {
+      blob,
+      ext: blob.type.includes('mp4') ? 'mp4' : 'webm',
+      durationMs: totalMs,
+      // The cut is the highlight — no reason to rank it again.
+      activity: [],
+    }
+  } catch {
+    return null
+  } finally {
+    cleanup()
   }
 }
 

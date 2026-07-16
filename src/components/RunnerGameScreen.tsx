@@ -66,14 +66,8 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const [result, setResult] = useState<Result | null>(null)
   const [best, setBest] = useState(() => loadRunnerBest())
   /** Auto-recorded vertical highlight clip, ready once the run ends. */
-  const {
-    status: clipStatus,
-    sharing,
-    shareError,
-    capture: captureClip,
-    reset: resetClip,
-    share: handleShareClip,
-  } = useMatchClip()
+  const clipShare = useMatchClip()
+  const { capture: captureClip, reset: resetClip } = clipShare
 
   const players = mode ? runnerModeSpec(mode).players : 1
 
@@ -235,6 +229,11 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
       if (hit) {
         flashRef.current[i] = now + 350
         sfx.whistle()
+      }
+      // Highlight signal (the recording follows P1): a run is only interesting
+      // where something happens, and a crash beats a coin for drama.
+      if (i === 0) {
+        recorderRef.current.mark(hit ? 1 : dodge ? 0.7 : coin ? 0.4 : 0.05)
       }
       const ctx = cv.getContext('2d')
       if (ctx) drawScene(ctx, cv.width, cv.height, g, c, now < flashRef.current[i], now)
@@ -587,13 +586,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
               </>
             )}
           </div>
-          <ClipShare
-            status={clipStatus}
-            sharing={sharing}
-            shareError={shareError}
-            onShare={handleShareClip}
-            tone="dark"
-          />
+          <ClipShare state={clipShare} tone="dark" />
           <div className="flex gap-3">
             <button
               onClick={handleAgain}
