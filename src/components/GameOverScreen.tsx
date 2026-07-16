@@ -1,13 +1,16 @@
-import { Flame, Gauge, Home, RotateCcw, Share2, Trophy, Users, Zap } from 'lucide-react'
-import { useState } from 'react'
+import { Flame, Gauge, Home, RotateCcw, Trophy, Users, Zap } from 'lucide-react'
 import { useI18n } from '../i18n'
-import { shareClip, type MatchClip } from '../recorder'
 import { playerColorsUI } from '../theme'
 import type { MatchResults } from '../types'
+import { ClipShare } from './ClipShare'
+import type { ClipStatus } from '../hooks/useMatchClip'
 
 interface Props {
   results: MatchResults
-  clip: MatchClip | null
+  clipStatus: ClipStatus
+  sharing: boolean
+  shareError: boolean
+  onShare: () => void
   onNext: () => void
   onChangePlayers: () => void
   onHome: () => void
@@ -21,25 +24,17 @@ interface Props {
  */
 export function GameOverScreen({
   results,
-  clip,
+  clipStatus,
+  sharing,
+  shareError,
+  onShare,
   onNext,
   onChangePlayers,
   onHome,
   onContinueTournament,
 }: Props) {
   const { t } = useI18n()
-  const [sharing, setSharing] = useState(false)
   const winnerColor = playerColorsUI()[results.winnerIndex]
-
-  const handleShare = async () => {
-    if (!clip || sharing) return
-    setSharing(true)
-    try {
-      await shareClip(clip)
-    } finally {
-      setSharing(false)
-    }
-  }
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-scrim px-4 backdrop-blur-sm">
@@ -100,17 +95,12 @@ export function GameOverScreen({
         ))}
       </div>
 
-      {clip && (
-        <button
-          type="button"
-          onClick={handleShare}
-          disabled={sharing}
-          className="flex items-center gap-2 rounded-xl border border-edge bg-card px-5 py-2.5 text-sm font-semibold text-t2 transition-all hover:border-edge2 disabled:opacity-50"
-        >
-          <Share2 className="size-4" aria-hidden />
-          {t('over.share')}
-        </button>
-      )}
+      <ClipShare
+        status={clipStatus}
+        sharing={sharing}
+        shareError={shareError}
+        onShare={onShare}
+      />
 
       <div className="flex w-full max-w-xl flex-col gap-2.5">
         {onContinueTournament ? (

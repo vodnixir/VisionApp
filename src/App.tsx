@@ -16,7 +16,8 @@ import { useGameState } from './hooks/useGameState'
 import { useWakeLock } from './hooks/useWakeLock'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
 import { useI18n, type I18nKey } from './i18n'
-import { MatchRecorder, type MatchClip } from './recorder'
+import { MatchRecorder } from './recorder'
+import { useMatchClip } from './hooks/useMatchClip'
 import { recordSessionMatch } from './session'
 import { ShowCast, type CastStatus } from './show'
 import {
@@ -158,7 +159,14 @@ export default function App() {
   const [showResults, setShowResults] = useState(false)
   /** Pre-match rules briefing, shown between setup and calibration. */
   const [showBattleRules, setShowBattleRules] = useState(false)
-  const [clip, setClip] = useState<MatchClip | null>(null)
+  const {
+    status: clipStatus,
+    sharing: clipSharing,
+    shareError: clipShareError,
+    capture: captureClip,
+    reset: resetClip,
+    share: shareClipNow,
+  } = useMatchClip()
   const [tournament, setTournament] = useState<Tournament | null>(loadTournament)
   /** Which bracket match is being played right now (null = quick match). */
   const [pendingBracket, setPendingBracket] = useState<{ round: number; index: number } | null>(null)
@@ -239,7 +247,7 @@ export default function App() {
       names: coop ? [teamLabel, t('hud.boss')] : names,
       phase: 'over',
     })
-    void recorderRef.current.finish(CLIP_TAIL_MS).then((c) => setClip(c))
+    captureClip(recorderRef.current, CLIP_TAIL_MS)
 
     dispatch({ type: 'MATCH_END', results })
   }
@@ -471,12 +479,12 @@ export default function App() {
     if (settings.freezeMode && settings.matchMode === 'classic') {
       accumRef.current.freezes = generateFreezes()
     }
-    setClip(null)
+    resetClip()
     if (canvasRef.current) {
       recorderRef.current.start(canvasRef.current, settings.soundEnabled ? sfx.captureStream() : null)
     }
     dispatch({ type: 'MATCH_START', at: performance.now() })
-  }, [dispatch, canvasRef])
+  }, [dispatch, canvasRef, resetClip])
 
   // While the host reads the menu, quietly pull in the heavy TFJS chunk so the
   // START button doesn't pay the download.
@@ -615,7 +623,7 @@ export default function App() {
 
   const leaveArena = (to: 'HOME' | 'MATCH_SETUP' | 'TOURNAMENT') => {
     recorderRef.current.cancel()
-    setClip(null)
+    resetClip()
     setShowBattleRules(false)
     setPendingBracket(null)
     stop()
@@ -642,7 +650,7 @@ export default function App() {
 
   const handleRematch = () => {
     recorderRef.current.cancel()
-    setClip(null)
+    resetClip()
     resetRoundState()
     dispatch({ type: 'REMATCH' })
   }
@@ -682,7 +690,7 @@ export default function App() {
     )
     setPendingBracket(null)
     recorderRef.current.cancel()
-    setClip(null)
+    resetClip()
     resetRoundState()
     // The camera stays on: the next bracket match starts instantly.
     dispatch({ type: 'NAVIGATE', to: 'TOURNAMENT' })
@@ -761,7 +769,10 @@ export default function App() {
       {game.phase === 'GAME_OVER' && game.results && showResults && (
         <GameOverScreen
           results={game.results}
-          clip={clip}
+          clipStatus={clipStatus}
+          sharing={clipSharing}
+          shareError={clipShareError}
+          onShare={shareClipNow}
           onNext={handleRematch}
           onChangePlayers={() => leaveArena('MATCH_SETUP')}
           onHome={() => leaveArena('HOME')}

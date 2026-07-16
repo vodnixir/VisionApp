@@ -1,7 +1,9 @@
-import { ArrowLeft, Crown, LogIn, Plus, RefreshCw, Share2, Swords, WifiOff } from 'lucide-react'
+import { ArrowLeft, Crown, LogIn, Plus, RefreshCw, Swords, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
-import { MatchRecorder, shareClip, type MatchClip } from '../recorder'
+import { MatchRecorder } from '../recorder'
+import { useMatchClip } from '../hooks/useMatchClip'
+import { ClipShare } from './ClipShare'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { runCountdown } from '../countdown'
@@ -122,8 +124,14 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   /** The opponent dropped mid-match — their last heartbeat becomes the result. */
   const [oppLeft, setOppLeft] = useState(false)
   /** Auto-recorded vertical highlight clip of my run. */
-  const [clip, setClip] = useState<MatchClip | null>(null)
-  const [sharing, setSharing] = useState(false)
+  const {
+    status: clipStatus,
+    sharing,
+    shareError,
+    capture: captureClip,
+    reset: resetClip,
+    share: handleShareClip,
+  } = useMatchClip()
 
   const connRef = useRef<OnlineConnection | null>(null)
   const recorderRef = useRef(new MatchRecorder())
@@ -395,7 +403,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     accRef.current = 0
     lastSentRef.current = 0
     wakeLock.acquire()
-    setClip(null)
+    resetClip()
     if (overlayRef.current) recorderRef.current.start(overlayRef.current, sfx.captureStream())
     setOpp(OPPONENT_START)
     setOppLeft(false)
@@ -471,7 +479,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       setMyScore(score)
       setMyFinal(score)
       connRef.current?.send({ t: 'over', score, coins: g.coins })
-      void recorderRef.current.finish(1200).then((c) => setClip(c))
+      captureClip(recorderRef.current, 1200)
       setPhase('over')
       return
     }
@@ -481,7 +489,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   const handleRematch = () => {
     // The connection persists — recalibrate and the host restarts with a new seed.
     recorderRef.current.cancel()
-    setClip(null)
+    resetClip()
     setMyReady(false)
     setOppReady(false)
     setOpp(OPPONENT_START)
@@ -490,16 +498,6 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     setMyFinal(null)
     setOppFinal(null)
     setPhase('ready')
-  }
-
-  const handleShareClip = async () => {
-    if (!clip || sharing) return
-    setSharing(true)
-    try {
-      await shareClip(clip)
-    } finally {
-      setSharing(false)
-    }
   }
 
   const goBack = () => {
@@ -842,16 +840,13 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
 
           {oppLeft && <p className="-mt-2 text-sm text-white/50">{t('online.oppLeft')}</p>}
 
-          {clip && (
-            <BigButton
-              onClick={handleShareClip}
-              tone="light"
-              disabled={sharing}
-              icon={<Share2 className="size-5" />}
-            >
-              {t('over.share')}
-            </BigButton>
-          )}
+          <ClipShare
+            status={clipStatus}
+            sharing={sharing}
+            shareError={shareError}
+            onShare={handleShareClip}
+            tone="dark"
+          />
 
           <div className="flex gap-3">
             <BigButton

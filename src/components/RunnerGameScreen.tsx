@@ -1,4 +1,3 @@
-import { Share2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
 import { usePoseDetection } from '../hooks/usePoseDetection'
@@ -6,7 +5,9 @@ import { useWakeLock } from '../hooks/useWakeLock'
 import type { EngineFrame } from '../cv/engine'
 import { runCountdown } from '../countdown'
 import { mulberry32, randomSeed } from '../online/protocol'
-import { MatchRecorder, shareClip, type MatchClip } from '../recorder'
+import { MatchRecorder } from '../recorder'
+import { useMatchClip } from '../hooks/useMatchClip'
+import { ClipShare } from './ClipShare'
 import { useRunnerControl } from '../runner/useRunnerControl'
 import { RUNNER_MODES, runnerModeSpec, type RunnerMode } from '../runner/modes'
 import {
@@ -65,8 +66,14 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const [result, setResult] = useState<Result | null>(null)
   const [best, setBest] = useState(() => loadRunnerBest())
   /** Auto-recorded vertical highlight clip, ready once the run ends. */
-  const [clip, setClip] = useState<MatchClip | null>(null)
-  const [sharing, setSharing] = useState(false)
+  const {
+    status: clipStatus,
+    sharing,
+    shareError,
+    capture: captureClip,
+    reset: resetClip,
+    share: handleShareClip,
+  } = useMatchClip()
 
   const players = mode ? runnerModeSpec(mode).players : 1
 
@@ -174,7 +181,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     lastRef.current = performance.now()
     accRef.current = 0
     wakeLock.acquire()
-    setClip(null)
+    resetClip()
     // Record the metro world into a vertical highlight clip (P1's view in a
     // race). The camera-free demo has no run worth sharing, so skip it there.
     const worldCanvas = worldRefs.current[0]
@@ -262,7 +269,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     setResult({ players: perPlayer, winnerIndex, best: loadRunnerBest(), isBest })
     // The world freezes on the final frame; keep recording a short tail so the
     // clip ends on it, then hand back the shareable highlight.
-    void recorderRef.current.finish(1200).then((c) => setClip(c))
+    captureClip(recorderRef.current, 1200)
     setPhase('over')
   }
 
@@ -286,19 +293,9 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     if (!demo && status === 'idle') handleStart()
   }
 
-  const handleShareClip = async () => {
-    if (!clip || sharing) return
-    setSharing(true)
-    try {
-      await shareClip(clip)
-    } finally {
-      setSharing(false)
-    }
-  }
-
   const handleAgain = () => {
     recorderRef.current.cancel()
-    setClip(null)
+    resetClip()
     setResult(null)
     if (demo) {
       setCount(3)
@@ -328,7 +325,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     stop()
     for (const c of controls) c.reset()
     wakeLock.release()
-    setClip(null)
+    resetClip()
     setResult(null)
     setShowRules(false)
     setPhase('idle')
@@ -590,16 +587,13 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
               </>
             )}
           </div>
-          {clip && (
-            <button
-              onClick={handleShareClip}
-              disabled={sharing}
-              className="flex items-center gap-2 rounded-full bg-white/10 px-6 py-3 text-base font-bold ring-1 ring-white/20 disabled:opacity-50"
-            >
-              <Share2 className="size-4" aria-hidden />
-              {t('over.share')}
-            </button>
-          )}
+          <ClipShare
+            status={clipStatus}
+            sharing={sharing}
+            shareError={shareError}
+            onShare={handleShareClip}
+            tone="dark"
+          />
           <div className="flex gap-3">
             <button
               onClick={handleAgain}

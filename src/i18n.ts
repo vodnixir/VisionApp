@@ -132,6 +132,8 @@ const en = {
   'over.replay': 'Replay match',
   'over.share': 'Share clip',
   'over.clipPreparing': 'Preparing clip…',
+  'over.clipFailed': "Couldn't make a clip on this device",
+  'over.shareFailed': 'Sharing failed — try again',
   'over.newBelt': 'New belt: {belt}!',
 
   'belt.white': 'White belt',
@@ -406,6 +408,8 @@ const ru: Dict = {
   'over.replay': 'Переиграть матч',
   'over.share': 'Поделиться клипом',
   'over.clipPreparing': 'Готовим клип…',
+  'over.clipFailed': 'Не удалось сделать клип на этом устройстве',
+  'over.shareFailed': 'Не удалось поделиться — попробуй ещё раз',
   'over.newBelt': 'Новый пояс: {belt}!',
 
   'belt.white': 'Белый пояс',
@@ -677,6 +681,8 @@ const es: Dict = {
   'over.replay': 'Repetir partida',
   'over.share': 'Compartir clip',
   'over.clipPreparing': 'Preparando clip…',
+  'over.clipFailed': 'No se pudo crear el clip en este dispositivo',
+  'over.shareFailed': 'No se pudo compartir — inténtalo de nuevo',
   'over.newBelt': '¡Nuevo cinturón: {belt}!',
 
   'belt.white': 'Cinturón blanco',
@@ -948,6 +954,8 @@ const pt: Dict = {
   'over.replay': 'Repetir partida',
   'over.share': 'Compartilhar clipe',
   'over.clipPreparing': 'Preparando clipe…',
+  'over.clipFailed': 'Não foi possível criar o clipe neste dispositivo',
+  'over.shareFailed': 'Falha ao compartilhar — tente novamente',
   'over.newBelt': 'Nova faixa: {belt}!',
 
   'belt.white': 'Faixa branca',

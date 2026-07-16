@@ -288,16 +288,68 @@ export class MatchRecorder {
   }
 }
 
-/** Share the clip via the native sheet; fall back to a plain download. */
+/** Inside the Capacitor APK the browser share/download paths don't work. */
+function isNativePlatform(): boolean {
+  return Boolean(
+    (window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.(),
+  )
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error)
+    reader.onload = () => {
+      // reader gives a data: URL; the plugin wants the raw base64 payload.
+      const result = reader.result as string
+      resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
+ * Native share (Capacitor APK): the Android System WebView ignores blob:
+ * downloads and rejects navigator.share({files}), so instead write the clip to
+ * the app cache and hand its file:// URI to the native share sheet. The plugins
+ * are dynamically imported so the web bundle never pulls them in.
+ */
+async function shareClipNative(clip: MatchClip): Promise<void> {
+  const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+    import('@capacitor/filesystem'),
+    import('@capacitor/share'),
+  ])
+  const name = `speed-battle-${Date.now()}.${clip.ext}`
+  const data = await blobToBase64(clip.blob)
+  const { uri } = await Filesystem.writeFile({ path: name, data, directory: Directory.Cache })
+  await Share.share({ title: 'Speed Battle', text: '#SpeedBattleDuel', url: uri })
+}
+
+/**
+ * Share the clip. Throws if sharing genuinely failed (so callers can surface it)
+ * but stays silent when the user simply cancels the share sheet.
+ */
 export async function shareClip(clip: MatchClip): Promise<void> {
+  if (isNativePlatform()) {
+    try {
+      await shareClipNative(clip)
+    } catch (e) {
+      // User dismissed the native sheet — not an error worth reporting.
+      if (isShareAbort(e)) return
+      throw e
+    }
+    return
+  }
+
   const file = new File([clip.blob], `speed-battle.${clip.ext}`, { type: clip.blob.type })
   const shareData: ShareData = { files: [file] }
   if (typeof navigator.canShare === 'function' && navigator.canShare(shareData)) {
     try {
       await navigator.share(shareData)
       return
-    } catch {
-      // AbortError (user closed the sheet) or share failure — fall through to download.
+    } catch (e) {
+      if (isShareAbort(e)) return
+      // Other share failures — fall through to a plain download.
     }
   }
   const url = URL.createObjectURL(clip.blob)
@@ -306,4 +358,11 @@ export async function shareClip(clip: MatchClip): Promise<void> {
   a.download = file.name
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
+}
+
+/** A user closing the share sheet reports as an AbortError — treat it as success. */
+function isShareAbort(e: unknown): boolean {
+  if (e instanceof DOMException && e.name === 'AbortError') return true
+  const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase()
+  return msg.includes('cancel') || msg.includes('abort') || msg.includes('dismiss')
 }
