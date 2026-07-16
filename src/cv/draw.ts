@@ -220,18 +220,30 @@ export function drawMatchHud(
   const tx = Math.round((w - centerW) / 2)
   ctx.save()
 
-  // Rhythm: a ring around the timer breathing with the beat (biggest ON it).
+  // Rhythm: a ring around the timer that snaps big+bright ON the beat and
+  // shrinks/fades between beats — a clear "move NOW" pulse synced to the music.
   if (hud.beatPhase !== undefined) {
-    const strength = 1 - Math.min(hud.beatPhase, 1)
+    // Sharpen the falloff so the ring pops decisively on the beat rather than
+    // breathing gently — easier to move your whole body to.
+    const strength = (1 - Math.min(hud.beatPhase, 1)) ** 1.6
+    const cx = tx + centerW / 2
+    const cy = pad + timerH / 2
+    // Filled halo flash right on the beat (fades out within the beat).
+    ctx.globalAlpha = (th.glow ? 0.3 : 0.22) * strength
+    ctx.fillStyle = th.glow ? '#ffe600' : '#ffffff'
+    ctx.beginPath()
+    ctx.arc(cx, cy, timerH * (0.78 + strength * 0.28), 0, Math.PI * 2)
+    ctx.fill()
+    // Bold ring on top.
     ctx.strokeStyle = th.glow ? '#ffe600' : '#ffffff'
-    ctx.globalAlpha = th.glow ? 0.25 + 0.75 * strength ** 2 : 0.2 + 0.6 * strength ** 2
-    ctx.lineWidth = 3 + strength * (th.glow ? 5 : 4)
+    ctx.globalAlpha = th.glow ? 0.3 + 0.7 * strength : 0.25 + 0.65 * strength
+    ctx.lineWidth = 3 + strength * (th.glow ? 8 : 6)
     if (th.glow) {
       ctx.shadowColor = '#ffe600'
-      ctx.shadowBlur = 10 + strength * 22
+      ctx.shadowBlur = 12 + strength * 30
     }
     ctx.beginPath()
-    ctx.arc(tx + centerW / 2, pad + timerH / 2, timerH * (0.72 + strength * 0.16), 0, Math.PI * 2)
+    ctx.arc(cx, cy, timerH * (0.74 + strength * 0.22), 0, Math.PI * 2)
     ctx.stroke()
     ctx.globalAlpha = 1
     ctx.shadowBlur = 0

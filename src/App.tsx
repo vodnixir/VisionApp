@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { music } from './audio/music'
+import { music, type MusicTrack } from './audio/music'
 import { sfx } from './audio/sfx'
 import { createTournament, reportWinner, type Tournament } from './bracket'
 import { CalibrationOverlay } from './components/CalibrationOverlay'
@@ -492,13 +492,21 @@ export default function App() {
     prefetchEngine()
   }, [])
 
-  // Music bed follows the phase: the high-energy round track while calibrating
-  // or playing, the mellow menu groove everywhere else. play() is a no-op when
-  // muted and won't restart a track that's already sounding.
+  // Music bed follows the phase: the high-energy round track while calibrating,
+  // the mellow menu groove in menus. Rhythm mode swaps to its own beat-locked
+  // track exactly at PLAYING — the round→rhythm switch restarts the loop so its
+  // kick lands on the same beat grid the scoring uses (both begin at match
+  // start; the ±window forgives the residual audio-clock offset). play() is a
+  // no-op when muted and won't restart a track that's already sounding.
   useEffect(() => {
-    const inRound = game.phase === 'CALIBRATION' || game.phase === 'PLAYING'
-    music.play(inRound ? 'round' : 'menu')
-  }, [game.phase])
+    let track: MusicTrack = 'menu'
+    if (game.phase === 'PLAYING') {
+      track = game.settings.matchMode === 'rhythm' ? 'rhythm' : 'round'
+    } else if (game.phase === 'CALIBRATION') {
+      track = 'round'
+    }
+    music.play(track)
+  }, [game.phase, game.settings.matchMode])
 
   // Self-correcting countdown: each tick targets an absolute timestamp, so the
   // gong lands on the displayed "1 → GO" without setInterval drift.

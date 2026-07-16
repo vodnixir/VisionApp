@@ -17,7 +17,7 @@ import { useSyncExternalStore } from 'react'
 
 const MUSIC_STORAGE_KEY = 'sb.music'
 
-export type MusicTrack = 'menu' | 'round'
+export type MusicTrack = 'menu' | 'round' | 'rhythm'
 
 /** Equal-temperament frequency for a semitone offset from A4 (440 Hz). */
 function hz(semitonesFromA4: number): number {
@@ -143,7 +143,56 @@ const ROUND: TrackSpec = {
   },
 }
 
-const SPECS: Record<MusicTrack, TrackSpec> = { menu: MENU, round: ROUND }
+/**
+ * The Rhythm-mode bed. Tempo is locked to RHYTHM_BPM (105) so one quarter note
+ * equals exactly one scoring beat — a loud, unmistakable kick lands on every
+ * beat the game rewards, giving players a pulse to move their whole body to.
+ * (Kept intentionally sparse between kicks so the beat itself stays the star.)
+ */
+const RHYTHM: TrackSpec = {
+  bpm: 105,
+  level: 0.5,
+  stepsPerBar: 16,
+  bars: 2,
+  step(step, t, secPerStep) {
+    const voices: Voice[] = []
+    const bar = Math.floor(step / 16) % 2
+    const inBar = step % 16
+    const onBeat = inBar % 4 === 0 // the four scoring beats per bar
+    const beat = inBar / 4 // 0..3 on a quarter note
+
+    // Punchy kick on EVERY quarter note — this is the anchor players move to.
+    if (onBeat) {
+      voices.push({ t, freq: 165, glideTo: 50, dur: 0.24, type: 'sine', gain: 0.85 })
+      // A short click layered on top sharpens the transient so the beat reads
+      // even through phone speakers.
+      voices.push({ t, freq: 1600, dur: 0.02, type: 'square', gain: 0.18 })
+    }
+    // Clap/snare on the backbeats (2 and 4) for a danceable groove.
+    if (beat === 1 || beat === 3) {
+      voices.push({ t, freq: 2000, dur: 0.04, type: 'square', gain: 0.12 })
+    }
+    // Offbeat hats keep the sixteenth grid alive without competing with the kick.
+    if (inBar % 4 === 2) {
+      voices.push({ t, freq: 9000, dur: 0.025, type: 'square', gain: 0.05 })
+    }
+    // Simple root bass under each beat drives the pulse.
+    if (onBeat) {
+      const root = CHORDS[bar % CHORDS.length][0]
+      voices.push({
+        t,
+        freq: hz(root - 12),
+        dur: secPerStep * 3,
+        type: 'sawtooth',
+        gain: 0.13,
+        cutoff: 480,
+      })
+    }
+    return voices
+  },
+}
+
+const SPECS: Record<MusicTrack, TrackSpec> = { menu: MENU, round: ROUND, rhythm: RHYTHM }
 
 const LOOKAHEAD_MS = 25
 const SCHEDULE_AHEAD_S = 0.12

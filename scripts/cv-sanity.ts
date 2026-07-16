@@ -383,6 +383,22 @@ ok('rhythm: on-beat movement lands ONE hit per beat, off-beat only trickles', ()
   assert.ok(early.events.hit?.[0], 'early hit inside the pre-beat window counts')
 })
 
+ok('endurance: pace is capped — sprinting earns no more than a steady pace', () => {
+  const s = createModeState('endurance')
+  // Two players moving well above the pace cap fill at the SAME rate: intensity
+  // beyond the cap gives no edge (unlike classic, where fill scales with speed).
+  const t = modeTick(s, { dt: 0.1, elapsedMs: 1000, speeds: [1.0, 2.5], rate: 6.5 })
+  assert.equal(t.fill[0], t.fill[1], 'capped fill ignores extra speed')
+  // A player below the cap still fills less than one at/above it.
+  const t2 = modeTick(createModeState('endurance'), {
+    dt: 0.1,
+    elapsedMs: 1000,
+    speeds: [0.6, 1.0],
+    rate: 6.5,
+  })
+  assert.ok(t2.fill[0] < t2.fill[1], 'sub-cap pace fills slower')
+})
+
 ok('endurance: grace absorbs short dips, then the bar burns', () => {
   const s = createModeState('endurance')
   const tick = (elapsedMs: number, speed: number) =>

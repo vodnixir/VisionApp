@@ -21,9 +21,19 @@ export const RHYTHM_TRICKLE = 0.15
 
 /* ---------------- Endurance ---------------- */
 
+/** Below this you count as stopped — the dip timer starts running. */
 export const ENDURANCE_SPEED_MIN = 0.5
-export const ENDURANCE_GRACE_MS = 800
-export const ENDURANCE_BURN_PER_S = 3
+/**
+ * Endurance rewards a STEADY pace, not raw intensity: any movement at or above
+ * this speed fills at the full base rate, and going faster earns nothing extra.
+ * That's what sets it apart from classic (where fill scales with speed) — here
+ * the winner is whoever never stops, not whoever sprints hardest.
+ */
+export const ENDURANCE_PACE_CAP = 0.9
+/** Short grace before a stall starts draining (shorter than before — stopping bites sooner). */
+export const ENDURANCE_GRACE_MS = 600
+/** Stalling past the grace drains the bar hard — the core endurance pressure. */
+export const ENDURANCE_BURN_PER_S = 8
 
 /* ---------------- Traffic light ---------------- */
 
@@ -150,7 +160,10 @@ export function modeTick(
       for (const i of [0, 1] as const) {
         if (speeds[i] >= ENDURANCE_SPEED_MIN) {
           state.dipMs[i] = 0
-          fill[i] = speeds[i] * rate * dt
+          // Pace-capped fill: steady movement fills at the full base rate;
+          // sprinting past the cap gives no edge. Consistency wins, not bursts.
+          const paced = Math.min(speeds[i], ENDURANCE_PACE_CAP) / ENDURANCE_PACE_CAP
+          fill[i] = paced * rate * dt
         } else {
           state.dipMs[i] += dt * 1000
           if (state.dipMs[i] > ENDURANCE_GRACE_MS) burn[i] = ENDURANCE_BURN_PER_S * dt
