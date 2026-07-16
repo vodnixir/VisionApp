@@ -243,7 +243,7 @@ const en = {
   'online.create': 'Create game',
   'online.join': 'Join',
   'online.menuHint':
-    'One creates the game and shares a link, the other joins with it. No server — straight between the phones.',
+    'One creates the game and shares a link, the other joins with it. The phones connect directly, or through a relay if the network blocks it.',
   'online.step1Host': 'Send the link to a friend',
   'online.preparingInvite': 'Preparing the invite…',
   'online.inviteByLink': 'Invite by link',
@@ -529,7 +529,7 @@ const ru: Dict = {
   'online.create': 'Создать игру',
   'online.join': 'Присоединиться',
   'online.menuHint':
-    'Один создаёт игру и делится кодом, второй присоединяется по нему. Без сервера — всё напрямую между телефонами.',
+    'Один создаёт игру и делится ссылкой, второй присоединяется по ней. Телефоны соединяются напрямую, а если сеть не пускает — через реле.',
   'online.step1Host': 'Отправь ссылку другу',
   'online.preparingInvite': 'Готовим приглашение…',
   'online.inviteByLink': 'Пригласить по ссылке',
@@ -811,7 +811,7 @@ const es: Dict = {
   'online.create': 'Crear partida',
   'online.join': 'Unirse',
   'online.menuHint':
-    'Uno crea la partida y comparte un enlace, el otro se une con él. Sin servidor — directo entre los móviles.',
+    'Uno crea la partida y comparte un enlace, el otro se une con él. Los móviles se conectan directamente, o por un relé si la red lo impide.',
   'online.step1Host': 'Envía el enlace a un amigo',
   'online.preparingInvite': 'Preparando la invitación…',
   'online.inviteByLink': 'Invitar por enlace',
@@ -1093,7 +1093,7 @@ const pt: Dict = {
   'online.create': 'Criar jogo',
   'online.join': 'Entrar',
   'online.menuHint':
-    'Um cria o jogo e compartilha um link, o outro entra com ele. Sem servidor — direto entre os celulares.',
+    'Um cria o jogo e compartilha um link, o outro entra com ele. Os celulares se conectam diretamente, ou por um relay se a rede bloquear.',
   'online.step1Host': 'Envie o link para um amigo',
   'online.preparingInvite': 'Preparando o convite…',
   'online.inviteByLink': 'Convidar por link',
