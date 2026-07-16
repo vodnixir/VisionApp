@@ -10,7 +10,9 @@ import { MatchRecorder, shareClip, type MatchClip } from '../recorder'
 import { useRunnerControl } from '../runner/useRunnerControl'
 import { RUNNER_MODES, runnerModeSpec, type RunnerMode } from '../runner/modes'
 import {
+  MAX_FRAME_S,
   PLAYER_Z,
+  SIM_STEP_S,
   createRunnerState,
   loadRunnerBest,
   runnerScore,
@@ -73,6 +75,8 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const flashRef = useRef<number[]>([])
   const rafRef = useRef(0)
   const lastRef = useRef(0)
+  /** Leftover real time (<1 sim step) carried between frames. */
+  const accRef = useRef(0)
   const recorderRef = useRef(new MatchRecorder())
   const wakeLock = useWakeLock()
 
@@ -168,6 +172,7 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     gamesRef.current = Array.from({ length: players }, () => createRunnerState(mulberry32(seed)))
     flashRef.current = Array.from({ length: players }, () => 0)
     lastRef.current = performance.now()
+    accRef.current = 0
     wakeLock.acquire()
     setClip(null)
     // Record the metro world into a vertical highlight clip (P1's view in a
@@ -183,8 +188,14 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const loop = (now: number) => {
     const games = gamesRef.current
     if (games.length === 0) return
-    const dt = Math.min((now - lastRef.current) / 1000, 0.05)
+
+    // Step the sim in fixed slices so the world keeps real-time pace even when
+    // the frame rate drops (heavy 3-body tracking in Squad). One shared step
+    // count drives every player's world in lockstep; drawing happens once.
+    accRef.current = Math.min(accRef.current + (now - lastRef.current) / 1000, MAX_FRAME_S)
     lastRef.current = now
+    const steps = Math.floor(accRef.current / SIM_STEP_S)
+    accRef.current -= steps * SIM_STEP_S
 
     for (let i = 0; i < games.length; i++) {
       const g = games[i]
@@ -196,16 +207,25 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
       }
       const c = demo ? demoBot(g) : controls[i].controlRef.current
       if (demo) controls[i].controlRef.current = c
-      const ev = stepRunner(g, {
-        dt,
-        lane: c.lane,
-        airborne: c.airborne,
-        crouching: c.crouching,
-        nowMs: now,
-      })
-      if (ev.coin) sfx.tick()
-      if (ev.dodge) sfx.release()
-      if (ev.hit) {
+      let coin = false
+      let dodge = false
+      let hit = false
+      for (let s = 0; s < steps; s++) {
+        const ev = stepRunner(g, {
+          dt: SIM_STEP_S,
+          lane: c.lane,
+          airborne: c.airborne,
+          crouching: c.crouching,
+          nowMs: now,
+        })
+        if (ev.coin) coin = true
+        if (ev.dodge) dodge = true
+        if (ev.hit) hit = true
+        if (g.over) break
+      }
+      if (coin) sfx.tick()
+      if (dodge) sfx.release()
+      if (hit) {
         flashRef.current[i] = now + 350
         sfx.whistle()
       }

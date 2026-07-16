@@ -8,6 +8,8 @@ import { runCountdown } from '../countdown'
 import type { EngineFrame } from '../cv/engine'
 import { useRunnerControl } from '../runner/useRunnerControl'
 import {
+  MAX_FRAME_S,
+  SIM_STEP_S,
   START_LIVES,
   createRunnerState,
   runnerScore,
@@ -153,6 +155,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   const startDelayRef = useRef(START_DELAY_MS)
   const rafRef = useRef(0)
   const lastRef = useRef(0)
+  /** Leftover real time (<1 sim step) carried between frames. */
+  const accRef = useRef(0)
   const lastSentRef = useRef(0)
   const flashUntilRef = useRef(0)
   const trackAddedRef = useRef(false)
@@ -388,6 +392,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     gameRef.current = createRunnerState(mulberry32(seedRef.current))
     flashUntilRef.current = 0
     lastRef.current = performance.now()
+    accRef.current = 0
     lastSentRef.current = 0
     wakeLock.acquire()
     setClip(null)
@@ -409,20 +414,35 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       cv.width = cv.clientWidth
       cv.height = cv.clientHeight
     }
-    const dt = Math.min((now - lastRef.current) / 1000, 0.05)
+    // Fixed-step sim so the race keeps real-time pace regardless of frame rate
+    // (and both phones advance the same sim-time per obstacle stream).
+    accRef.current = Math.min(accRef.current + (now - lastRef.current) / 1000, MAX_FRAME_S)
     lastRef.current = now
+    const steps = Math.floor(accRef.current / SIM_STEP_S)
+    accRef.current -= steps * SIM_STEP_S
 
     const c = controlRef.current
-    const ev = stepRunner(g, {
-      dt,
-      lane: c.lane,
-      airborne: c.airborne,
-      crouching: c.crouching,
-      nowMs: now,
-    })
-    if (ev.coin) sfx.tick()
-    if (ev.dodge) sfx.release()
-    if (ev.hit) {
+    let coin = false
+    let dodge = false
+    let hit = false
+    let gameOver = false
+    for (let s = 0; s < steps; s++) {
+      const ev = stepRunner(g, {
+        dt: SIM_STEP_S,
+        lane: c.lane,
+        airborne: c.airborne,
+        crouching: c.crouching,
+        nowMs: now,
+      })
+      if (ev.coin) coin = true
+      if (ev.dodge) dodge = true
+      if (ev.hit) hit = true
+      if (ev.gameOver) gameOver = true
+      if (g.over) break
+    }
+    if (coin) sfx.tick()
+    if (dodge) sfx.release()
+    if (hit) {
       flashUntilRef.current = now + 350
       sfx.whistle()
     }
@@ -445,7 +465,7 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     const ctx = cv.getContext('2d')
     if (ctx) drawScene(ctx, cv.width, cv.height, g, c, now < flashUntilRef.current, now)
 
-    if (ev.gameOver) {
+    if (gameOver) {
       sfx.victory()
       const score = runnerScore(g)
       setMyScore(score)

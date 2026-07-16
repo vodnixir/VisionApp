@@ -81,6 +81,22 @@ const SPAWN_BASE_MS = 1600
 const SPAWN_MIN_MS = 850
 const INVINCIBLE_MS = 1300
 
+/**
+ * Fixed simulation step. The render loop feeds real elapsed time through an
+ * accumulator and calls stepRunner in slices this size, so spawn cadence,
+ * approach speed and the difficulty ramp all stay tied to WALL-CLOCK time no
+ * matter the frame rate. (Before this, a single per-frame dt clamped at 50 ms
+ * meant a slow frame rate — e.g. three-body pose tracking in Squad mode — ran
+ * the sim in slow motion, and obstacles felt like they never came.)
+ */
+export const SIM_STEP_S = 1 / 60
+/**
+ * Longest real gap we simulate in one frame. Past this (a backgrounded tab, a
+ * long stall) we drop the excess instead of fast-forwarding the run through a
+ * wall of obstacles the player never saw.
+ */
+export const MAX_FRAME_S = 0.25
+
 const NO_EVENTS: RunnerEvents = { hit: false, coin: false, dodge: false, gameOver: false }
 
 const LANES: Lane[] = [-1, 0, 1]
