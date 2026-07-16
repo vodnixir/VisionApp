@@ -30,6 +30,11 @@ jobs:
       - run: npm run build
         env:
           GHPAGES: 'true'
+          # TURN relay for the online battle (free tier at metered.ca).
+          # Without these secrets the build falls back to STUN-only.
+          VITE_TURN_URL: ${{ secrets.VITE_TURN_URL }}
+          VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME }}
+          VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL }}
       - uses: actions/configure-pages@v5
         with:
           enablement: true

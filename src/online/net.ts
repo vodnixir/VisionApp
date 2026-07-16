@@ -9,9 +9,10 @@
  * Once the answer lands the data channel opens and both sides are connected.
  *
  * ICE is non-trickle: we wait for gathering to finish (bounded by a timeout) so
- * every candidate is baked into the single SDP the code carries. A public STUN
- * server is enough for most home networks; symmetric-NAT mobile links that need
- * TURN are the known limitation of the zero-server approach.
+ * every candidate is baked into the single SDP the code carries. STUN alone only
+ * works on friendly networks (same simple Wi-Fi); a TURN relay — configured via
+ * VITE_TURN_* env vars at build time — is what makes phones on different
+ * networks (mobile data, CGNAT, symmetric NAT) actually connect.
  */
 import { packSignal, unpackSignal, type NetMessage } from './protocol'
 
@@ -27,9 +28,35 @@ export interface NetCallbacks {
   onState?: (state: ConnState) => void
 }
 
-const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }]
-/** Cap on waiting for ICE gathering — some browsers never emit 'complete'. */
-const ICE_TIMEOUT_MS = 2800
+// TURN relay (e.g. a free metered.ca "Open Relay" account). Baked in at build
+// time: locally via .env.local, on GitHub Pages via repo secrets (deploy.yml).
+// VITE_TURN_URL may hold several comma-separated turn:/turns: URLs.
+const TURN_URL: string = import.meta.env.VITE_TURN_URL ?? ''
+const TURN_USERNAME: string = import.meta.env.VITE_TURN_USERNAME ?? ''
+const TURN_CREDENTIAL: string = import.meta.env.VITE_TURN_CREDENTIAL ?? ''
+
+/** Whether a TURN relay is baked into this build (UI warns when it isn't). */
+export const TURN_CONFIGURED = Boolean(TURN_URL && TURN_USERNAME && TURN_CREDENTIAL)
+
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  ...(TURN_CONFIGURED
+    ? [
+        {
+          urls: TURN_URL.split(',').map((u) => u.trim()),
+          username: TURN_USERNAME,
+          credential: TURN_CREDENTIAL,
+        },
+      ]
+    : []),
+]
+/**
+ * Cap on waiting for ICE gathering — some browsers never emit 'complete'.
+ * Generous on purpose: cutting it short bakes an incomplete candidate set into
+ * the one-shot SDP code (there is no trickle to recover with), and slow mobile
+ * links can take several seconds to produce their relay candidates.
+ */
+const ICE_TIMEOUT_MS = 8000
 
 export class OnlineConnection {
   readonly role: Role

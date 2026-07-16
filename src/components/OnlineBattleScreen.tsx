@@ -15,7 +15,7 @@ import {
   type RunnerState,
 } from '../runner/game'
 import { drawScene } from '../runner/draw'
-import { OnlineConnection, type ConnState, type Role } from '../online/net'
+import { OnlineConnection, TURN_CONFIGURED, type ConnState, type Role } from '../online/net'
 import { mulberry32, randomSeed, type NetMessage } from '../online/protocol'
 import { useI18n } from '../i18n'
 import {
@@ -50,26 +50,37 @@ interface Opponent {
 
 const OPPONENT_START: Opponent = { score: 0, lives: START_LIVES, over: false }
 
-/** A shareable invite link that opens this app straight into the guest flow. */
-function inviteUrl(code: string): string {
-  const { origin, pathname } = window.location
-  return `${origin}${pathname}#online?j=${encodeURIComponent(code)}`
+/** The hosted web build — links must point somewhere the OTHER phone can open. */
+const CANONICAL_APP_URL = 'https://vodnixir.github.io/VisionApp/'
+
+/**
+ * Base URL for shareable links. Inside the Capacitor APK (and local dev) the
+ * origin is localhost — a link to it is dead on the other phone, so those
+ * builds hand out the hosted web version instead.
+ */
+function appBaseUrl(): string {
+  const { origin, pathname, hostname } = window.location
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return CANONICAL_APP_URL
+  return `${origin}${pathname}`
 }
 
-/** The guest's reply link (carries the answer back to the host). */
-function answerUrl(code: string): string {
-  const { origin, pathname } = window.location
-  return `${origin}${pathname}#online?a=${encodeURIComponent(code)}`
+/** A shareable invite link that opens this app straight into the guest flow. */
+function inviteUrl(code: string): string {
+  return `${appBaseUrl()}#online?j=${encodeURIComponent(code)}`
 }
 
 /**
- * Accept either a raw signaling code OR a pasted invite/answer LINK — so the
- * friend can send whichever is handier and it just works, no "wrong thing
- * pasted" foot-gun.
+ * Accept a raw signaling code, a pasted invite/answer LINK, or a whole chat
+ * message with the code somewhere inside — so the friend can send whichever is
+ * handier and it just works, no "wrong thing pasted" foot-gun.
  */
 function extractSignalCode(input: string): string {
-  const m = input.match(/[?&](?:j|a)=([^&\s]+)/)
-  return m ? decodeURIComponent(m[1]) : input.trim()
+  const link = input.match(/[?&](?:j|a)=([^&\s]+)/)
+  if (link) return decodeURIComponent(link[1])
+  // A bare packSignal token ("g."/"r." + base64url) pasted inside prose.
+  const token = input.match(/\b[gr]\.[A-Za-z0-9_-]{16,}/)
+  if (token) return token[0]
+  return input.trim()
 }
 
 /**
@@ -176,12 +187,18 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     }
   }, [status, videoRef])
 
-  // Teardown.
+  // Teardown. Resetting the latches alongside the connection keeps the invite
+  // flow correct under StrictMode's simulated remount in dev: a fresh mount
+  // re-boots cleanly instead of holding a closed peer connection.
   useEffect(
     () => () => {
       cancelAnimationFrame(rafRef.current)
       recorderRef.current.cancel()
       connRef.current?.close()
+      connRef.current = null
+      trackAddedRef.current = false
+      bootedRef.current = false
+      autoAcceptedRef.current = false
       stop()
     },
     [stop],
@@ -627,6 +644,9 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
             </BigButton>
           </div>
           <p className="max-w-xs text-center text-xs text-t3">{t('online.menuHint')}</p>
+          {!TURN_CONFIGURED && (
+            <p className="max-w-xs text-center text-[11px] text-gold">{t('online.noTurn')}</p>
+          )}
         </Screen>
       )}
 
@@ -652,7 +672,8 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
                   {offerCode ? (
                     <CodeShare
                       code={offerCode}
-                      shareValue={inviteUrl(offerCode)}
+                      shareValue={t('online.inviteShareText', { url: inviteUrl(offerCode) })}
+                      qrValue={inviteUrl(offerCode)}
                       shareLabel={t('online.inviteByLink')}
                     />
                   ) : (
@@ -689,11 +710,16 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
                 <Step n={2} title={t('online.step2Guest')} done={conn === 'connected'}>
                   {answerCode ? (
                     <>
+                      {/* The reply is shared as TEXT, not a link: tapping a link
+                          would reload the host's app and kill the pending
+                          handshake — the host must PASTE it instead. */}
                       <CodeShare
                         code={answerCode}
-                        shareValue={answerUrl(answerCode)}
+                        shareValue={t('online.answerShareText', { code: answerCode })}
+                        qrValue={answerCode}
                         shareLabel={t('online.sendAnswer')}
                       />
+                      <p className="mt-2 text-xs text-gold">{t('online.answerNote')}</p>
                       <PendingLine text={t('online.waitHost')} spin />
                     </>
                   ) : (

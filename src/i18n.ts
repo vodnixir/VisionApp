@@ -277,6 +277,12 @@ const en = {
   'online.scanQr': 'Point the other phone here to scan',
   'online.wait': 'One sec…',
   'online.mirror': 'Mirror',
+  'online.inviteShareText': 'Speed Battle — online duel! Open this link on your phone to join: {url}',
+  'online.answerShareText':
+    "Speed Battle reply code — PASTE it in the app (step 2, don't open it as a link): {code}",
+  'online.answerNote':
+    'The host must paste this code into their app — opening it as a link would break the connection.',
+  'online.noTurn': 'No relay server in this build — connecting across different networks may fail.',
 } as const
 
 export type I18nKey = keyof typeof en
@@ -546,6 +552,12 @@ const ru: Dict = {
   'online.scanQr': 'Наведи камеру другого телефона',
   'online.wait': 'Секунду…',
   'online.mirror': 'Зеркало',
+  'online.inviteShareText': 'Speed Battle — онлайн-дуэль! Открой ссылку на телефоне и присоединяйся: {url}',
+  'online.answerShareText':
+    'Код-ответ для Speed Battle — ВСТАВЬ его в приложении (шаг 2, не открывай как ссылку): {code}',
+  'online.answerNote':
+    'Хост должен вставить этот код у себя в приложении — если открыть его как ссылку, соединение сорвётся.',
+  'online.noTurn': 'В этой сборке нет реле-сервера — соединение между разными сетями может не пройти.',
 }
 
 const es: Dict = {
@@ -811,6 +823,12 @@ const es: Dict = {
   'online.scanQr': 'Apunta el otro móvil aquí',
   'online.wait': 'Un momento…',
   'online.mirror': 'Espejo',
+  'online.inviteShareText': 'Speed Battle — ¡duelo online! Abre este enlace en tu móvil para unirte: {url}',
+  'online.answerShareText':
+    'Código de respuesta de Speed Battle — PÉGALO en la app (paso 2, no lo abras como enlace): {code}',
+  'online.answerNote':
+    'El anfitrión debe pegar este código en su app — abrirlo como enlace cortaría la conexión.',
+  'online.noTurn': 'Esta versión no incluye servidor relé — conectar entre redes distintas puede fallar.',
 }
 
 const pt: Dict = {
@@ -1076,6 +1094,12 @@ const pt: Dict = {
   'online.scanQr': 'Aponte o outro celular aqui',
   'online.wait': 'Um instante…',
   'online.mirror': 'Espelho',
+  'online.inviteShareText': 'Speed Battle — duelo online! Abra este link no seu celular para entrar: {url}',
+  'online.answerShareText':
+    'Código de resposta do Speed Battle — COLE-O no app (passo 2, não abra como link): {code}',
+  'online.answerNote':
+    'O anfitrião deve colar este código no app dele — abri-lo como link derrubaria a conexão.',
+  'online.noTurn': 'Esta versão não tem servidor relé — conectar entre redes diferentes pode falhar.',
 }
 
 const DICTS: Record<Lang, Dict> = { en, ru, es, pt }

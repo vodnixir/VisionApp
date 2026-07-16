@@ -107,19 +107,21 @@ export function Step({
 }
 
 /**
- * A read-only code with Share + Copy actions. When `shareValue` is given (the
- * host's invite link), the buttons act on THAT while the raw code stays visible
- * as a manual fallback — so a friend usually just taps the link and skips the
- * paste step entirely.
+ * A read-only code with Share + Copy actions. When `shareValue` is given (an
+ * invite message with the link, or a reply message with the code), the buttons
+ * act on THAT while the raw code stays visible as a manual fallback. `qrValue`
+ * lets the QR carry just the bare link/code instead of the whole chat message.
  */
 export function CodeShare({
   code,
   shareLabel,
   shareValue,
+  qrValue,
 }: {
   code: string
   shareLabel: string
   shareValue?: string
+  qrValue?: string
 }) {
   const { t } = useI18n()
   const payload = shareValue ?? code
@@ -145,7 +147,7 @@ export function CodeShare({
     <div className="flex flex-col gap-2">
       {showQr && (
         <div className="flex flex-col items-center gap-1.5 py-1">
-          <Qr value={payload} size={180} />
+          <Qr value={qrValue ?? payload} size={180} />
           <span className="text-[11px] text-t3">{t('online.scanQr')}</span>
         </div>
       )}
