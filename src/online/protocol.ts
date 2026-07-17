@@ -61,6 +61,12 @@ export type NetMessage =
    * never sees these.
    */
   | { t: 'sdp'; sdp: RTCSessionDescriptionInit }
+  /**
+   * Keepalive. Sent on a timer so the channel is never idle long enough for ICE
+   * consent to lapse (a phone left on the ready screen, or backgrounded to paste
+   * a link). Handled inside net.ts — the game layer never sees these.
+   */
+  | { t: 'ping' }
 
 /* ---------------- Signaling code (paste-to-a-friend) ---------------- */
 

@@ -76,6 +76,8 @@ const ICE_TIMEOUT_MS = 8000
  * fails), the rest add nothing, so we settle after a short grace for stragglers.
  */
 const ICE_SETTLE_MS = 700
+/** Ping cadence — well under the ~30s ICE consent window it exists to protect. */
+const KEEPALIVE_MS = 4000
 
 export class OnlineConnection {
   readonly role: Role
@@ -88,7 +90,9 @@ export class OnlineConnection {
    */
   private renegotiating = false
   private makingOffer = false
-  private cameraAttached = false
+  /** Our outgoing camera sender, so a restarted camera can swap tracks in place. */
+  private videoSender: RTCRtpSender | null = null
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null
   /** The impolite peer wins a glare; the polite one rolls back. */
   private get polite(): boolean {
     return this.role === 'guest'
@@ -137,21 +141,28 @@ export class OnlineConnection {
   }
 
   /**
-   * Send the local camera to the peer. Safe to call once the channel is open —
-   * it renegotiates over the channel rather than touching the pasted codes.
+   * Send the local camera to the peer. Safe to call once the channel is open,
+   * and safe to call REPEATEDLY: the camera can die and restart (Android reclaims
+   * it when the app is backgrounded), so a second call with a fresh stream swaps
+   * the track in place via replaceTrack — no renegotiation, no glare. Only the
+   * very first attach adds a track (which does renegotiate over the channel).
    */
   attachCamera(stream: MediaStream): void {
-    if (this.cameraAttached || !this.renegotiating) return
-    const tracks = stream.getVideoTracks()
-    if (tracks.length === 0) return
-    this.cameraAttached = true
-    // addTrack fires onnegotiationneeded, which ships the offer over the channel.
-    for (const track of tracks) this.pc.addTrack(track, stream)
+    if (!this.renegotiating) return // channel not open yet
+    const track = stream.getVideoTracks()[0]
+    if (!track) return
+    if (this.videoSender) {
+      if (this.videoSender.track === track) return // already sending exactly this
+      void this.videoSender.replaceTrack(track).catch(() => {})
+      return
+    }
+    // First camera: addTrack fires onnegotiationneeded → offer over the channel.
+    this.videoSender = this.pc.addTrack(track, stream)
   }
 
-  /** Whether the local camera has already been negotiated to the peer. */
+  /** Whether the local camera has been negotiated to the peer at least once. */
   get hasCamera(): boolean {
-    return this.cameraAttached
+    return this.videoSender !== null
   }
 
   /** Apply a renegotiation offer/answer that arrived over the channel. */
@@ -209,6 +220,8 @@ export class OnlineConnection {
 
   close(): void {
     this.renegotiating = false
+    if (this.keepaliveTimer) clearInterval(this.keepaliveTimer)
+    this.keepaliveTimer = null
     this.channel?.close()
     this.pc.getSenders().forEach((s) => s.track?.stop())
     this.pc.close()
@@ -219,6 +232,10 @@ export class OnlineConnection {
     channel.onopen = () => {
       // From here on the channel can carry SDP, so the camera may be attached.
       this.renegotiating = true
+      // Keep the channel warm so ICE consent never lapses on an idle screen.
+      if (!this.keepaliveTimer) {
+        this.keepaliveTimer = setInterval(() => this.sendRaw({ t: 'ping' }), KEEPALIVE_MS)
+      }
       this.cb.onState?.('connected')
     }
     channel.onmessage = (e) => {
@@ -228,11 +245,12 @@ export class OnlineConnection {
       } catch {
         return // ignore malformed frames
       }
-      // Renegotiation is transport business — the game layer never sees it.
+      // Transport-only frames never reach the game layer.
       if (msg.t === 'sdp') {
         void this.onRemoteSdp(msg.sdp)
         return
       }
+      if (msg.t === 'ping') return
       this.cb.onMessage?.(msg)
     }
   }

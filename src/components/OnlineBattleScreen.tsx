@@ -24,7 +24,6 @@ import { mulberry32, randomSeed, type NetMessage } from '../online/protocol'
 import { useI18n } from '../i18n'
 import {
   BigButton,
-  CameraStatus,
   CodeShare,
   ConnPill,
   Hearts,
@@ -161,10 +160,9 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
   const accRef = useRef(0)
   const lastSentRef = useRef(0)
   const flashUntilRef = useRef(0)
-  const trackAddedRef = useRef(false)
 
   const onFrameRef = useRef<(frame: EngineFrame) => void>(() => {})
-  const { videoRef, canvasRef, status, error, start, stop, configure } = usePoseDetection((frame) =>
+  const { videoRef, canvasRef, status, start, stop, configure } = usePoseDetection((frame) =>
     onFrameRef.current(frame),
   )
 
@@ -182,16 +180,36 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     })
   }, [mirror, configure, t, lang])
 
+  // Whether this phase wants the camera live (framing, calibrating, playing).
+  const needsCamera =
+    phase === 'ready' || phase === 'countdown' || phase === 'play' || phase === 'over'
+
+  // Bring the camera up once we're connected and in the ready room — never
+  // during signaling, so backgrounding to send the invite can't kill it.
+  useEffect(() => {
+    if (needsCamera && status === 'idle') void start()
+  }, [needsCamera, status, start])
+
+  // Auto-recover the camera: Android ends the track when the app is backgrounded
+  // (to paste a link, take a call…). On return to the foreground, restart it —
+  // this is the "reconnect" that keeps a mid-match background from breaking play.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (needsCamera && status !== 'running' && status !== 'starting') void start()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [needsCamera, status, start])
+
   // The camera is NOT part of the pasted handshake (that would bloat the code
   // and wreck the QR). Once the channel is open and the camera is live, hand the
-  // track over — net.ts renegotiates it across the open channel.
+  // track over — net.ts renegotiates it across the open channel, and swaps the
+  // track in place (no renegotiation) if the camera restarted after a background.
   useEffect(() => {
-    if (conn !== 'connected' || status !== 'running' || trackAddedRef.current) return
+    if (conn !== 'connected' || status !== 'running') return
     const stream = videoRef.current?.srcObject as MediaStream | null
-    if (stream && connRef.current) {
-      connRef.current.attachCamera(stream)
-      trackAddedRef.current = true
-    }
+    if (stream && connRef.current) connRef.current.attachCamera(stream)
   }, [conn, status, videoRef])
 
   // Teardown. Resetting the latches alongside the connection keeps the invite
@@ -203,7 +221,6 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       recorderRef.current.cancel()
       connRef.current?.close()
       connRef.current = null
-      trackAddedRef.current = false
       bootedRef.current = false
       autoAcceptedRef.current = false
       stop()
@@ -253,7 +270,10 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
     setPhase('signal')
     sfx.unlock()
     wakeLock.acquire()
-    void start()
+    // The camera is NOT started here. It plays no part in connecting, and while
+    // you're off pasting the invite into a messenger the OS reclaims it — the
+    // track 'ended' event used to nuke the whole session. It starts in the ready
+    // room instead (see the effect below), once you're actually connected.
   }
 
   // Arrived via a shared invite link (#online?j=…): drop straight into the guest
@@ -671,13 +691,11 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
               {role === 'host' ? <Plus className="size-5 text-accent" /> : <LogIn className="size-5 text-accent" />}
               {role === 'host' ? t('online.create') : t('online.join')}
             </h1>
+            {/* No camera status here — the camera isn't part of connecting; it
+                comes up only once you reach the ready room. */}
             <p className="mb-4 flex items-center gap-2 text-xs text-t3">
-              <CameraStatus status={status} /> · <ConnPill conn={conn} role={role} bare />
+              <ConnPill conn={conn} role={role} bare />
             </p>
-
-            {status === 'error' && error && (
-              <div className="mb-4 rounded-xl bg-danger/85 px-4 py-3 text-sm text-white">{error}</div>
-            )}
 
             {role === 'host' && (
               <div className="flex flex-col gap-4">
