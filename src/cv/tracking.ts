@@ -70,6 +70,16 @@ const MOTION_WEIGHTS: Record<string, number> = {
 export const REBIND_WINDOW_MS = 2500
 /** Max match distance as a multiple of the larger of the two bbox diagonals. */
 export const MATCH_GATE_FACTOR = 1.25
+/**
+ * How hard clothing colour can override a positional edge when pairing bodies to
+ * slots. Position still gates who is even eligible (a body beyond the gate is
+ * never claimed); within the gate, this decides ties — a full colour mismatch
+ * (intersection 0) costs this much "normalized distance", enough to flip a
+ * pairing when two kids cross or one pops out of an occlusion on the wrong side.
+ */
+export const APPEARANCE_WEIGHT = 0.7
+/** Smoothing time-constant for a player's running colour signature (seconds). */
+export const SIG_TAU_S = 0.4
 
 /* ------- ROI (zoom-in inference crop) ------- */
 
@@ -98,12 +108,45 @@ export interface BBox {
 
 export type KpMap = Map<string, Point>
 
+/**
+ * A compact appearance signature for one body — a normalized colour histogram of
+ * the torso region (clothing colour, mostly). Translation/scale invariant, so it
+ * stays stable as a player moves around the room. Compared by histogram
+ * intersection; used only to disambiguate identity when position is ambiguous.
+ */
+export type ColorSig = number[]
+
+/**
+ * Distance between two colour signatures, 0 (identical) … 1 (no overlap), via
+ * histogram intersection. A missing signature on either side returns 0 (neutral)
+ * so appearance never penalizes a body we haven't profiled yet — position alone
+ * decides until a signature exists.
+ */
+export function sigDistance(a: ColorSig | null | undefined, b: ColorSig | null | undefined): number {
+  if (!a || !b) return 0
+  const n = Math.min(a.length, b.length)
+  if (n === 0) return 0
+  let inter = 0
+  for (let i = 0; i < n; i++) inter += Math.min(a[i], b[i])
+  return Math.max(0, Math.min(1, 1 - inter))
+}
+
+/** EMA-blend a fresh signature into a running one (first sample seeds it). */
+export function blendSig(prev: ColorSig | null, next: ColorSig, alpha: number): ColorSig {
+  if (!prev || prev.length !== next.length) return next.slice()
+  const out = prev.slice()
+  for (let i = 0; i < out.length; i++) out[i] += (next[i] - out[i]) * alpha
+  return out
+}
+
 /** A detected pose that survived filtering, ready for role assignment. */
 export interface Candidate {
   pose: Pose
   bbox: BBox
   /** X used to decide who is left / right (nose if visible, bbox center otherwise). */
   anchorX: number
+  /** Clothing-colour signature sampled from the video (set by the engine, optional). */
+  sig?: ColorSig | null
 }
 
 /* ---------------- Pure helpers ---------------- */
@@ -235,6 +278,8 @@ export interface SlotAnchor {
   lastBBox: BBox | null
   /** performance.now() of the last observation. */
   lastSeenAtMs: number
+  /** Running clothing-colour signature (optional; null until first profiled). */
+  sig?: ColorSig | null
 }
 
 function anchorFor(slot: SlotAnchor, nowMs: number): BBox | null {
@@ -243,12 +288,21 @@ function anchorFor(slot: SlotAnchor, nowMs: number): BBox | null {
   return null
 }
 
-function gatedDist(anchor: BBox, candidate: BBox): number | null {
+/**
+ * Combined match cost of a candidate for an anchored slot, or null when the body
+ * is beyond the positional gate (not eligible for that slot at all). Cost blends
+ * normalized centre distance with clothing-colour mismatch, so two kids who cross
+ * — or one who re-emerges from an occlusion on the wrong side — snap back to the
+ * slot whose colour they match rather than merely the nearest anchor. With no
+ * signatures the colour term is 0, so this reduces to the old nearest-anchor rule.
+ */
+function pairCost(anchor: BBox, cand: Candidate, anchorSig: ColorSig | null | undefined): number | null {
   const a = bboxCenter(anchor)
-  const c = bboxCenter(candidate)
+  const c = bboxCenter(cand.bbox)
   const dist = Math.hypot(a.x - c.x, a.y - c.y)
-  const gate = MATCH_GATE_FACTOR * Math.max(bboxDiag(anchor), bboxDiag(candidate))
-  return dist <= gate ? dist : null
+  const gate = MATCH_GATE_FACTOR * Math.max(bboxDiag(anchor), bboxDiag(cand.bbox))
+  if (dist > gate) return null
+  return dist / gate + APPEARANCE_WEIGHT * sigDistance(anchorSig, cand.sig)
 }
 
 /**
@@ -275,34 +329,34 @@ export function matchLockedRoles(
   // Cold start / both anchors expired → positional rules.
   if (!anchors[0] && !anchors[1]) return assignRoles(candidates, videoWidth, mirror)
 
-  // Try both pairings; a pair is valid only when the slot has an anchor and
-  // the candidate is within the distance gate. Rank: most players placed
-  // first, then the smaller total distance.
+  // Try both pairings; a pair is valid only when the slot has an anchor and the
+  // candidate is within the distance gate. Rank: most players placed first, then
+  // the smaller total cost (centre distance + clothing-colour mismatch).
   const [c0, c1] = [candidates[0], candidates[1]]
   let best: [Candidate | null, Candidate | null] = [null, null]
   let bestPlaced = -1
-  let bestDist = Infinity
+  let bestCost = Infinity
   const permutations: Array<[Candidate | undefined, Candidate | undefined]> = [
     [c0, c1],
     [c1, c0],
   ]
   for (const [toSlot0, toSlot1] of permutations) {
     const assigned: [Candidate | null, Candidate | null] = [null, null]
-    let dist = 0
+    let cost = 0
     for (const slot of [0, 1] as const) {
       const cand = slot === 0 ? toSlot0 : toSlot1
       const anchor = anchors[slot]
       if (!cand || !anchor) continue
-      const d = gatedDist(anchor, cand.bbox)
-      if (d === null) continue
+      const c = pairCost(anchor, cand, slots[slot].sig)
+      if (c === null) continue
       assigned[slot] = cand
-      dist += d
+      cost += c
     }
     const placed = (assigned[0] ? 1 : 0) + (assigned[1] ? 1 : 0)
-    if (placed > bestPlaced || (placed === bestPlaced && dist < bestDist)) {
+    if (placed > bestPlaced || (placed === bestPlaced && cost < bestCost)) {
       best = assigned
       bestPlaced = placed
-      bestDist = dist
+      bestCost = cost
     }
   }
 
@@ -469,6 +523,54 @@ export function bodyPosture(pose: Pose): RawPosture | null {
   return { centerX, hipY, topY, shoulderWidth, torsoHeight: Math.max(1, hipY - shoulderY) }
 }
 
+/* ---------------- Arm pose (pose-copy mode) ---------------- */
+
+/**
+ * One arm reduced to the DIRECTIONS of its two segments, in raw video radians
+ * (atan2, +x right, +y down). Directions are translation- and scale-invariant,
+ * so the same shape scores identically whether the player is close or far, left
+ * or right of frame — only the arm's geometry matters.
+ */
+export interface Limb {
+  /** shoulder → elbow direction. */
+  upper: number
+  /** elbow → wrist direction. */
+  fore: number
+}
+
+/**
+ * Both arms for one player (either may be null when that side isn't confidently
+ * visible). The pose-copy scorer matches these against a target by best pairing,
+ * so which arm is "left" never matters — mirrored footage scores the same.
+ */
+export interface ArmPose {
+  left: Limb | null
+  right: Limb | null
+}
+
+function limbFor(pose: Pose, side: 'left' | 'right'): Limb | null {
+  const shoulder = confidentPoint(pose, `${side}_shoulder`)
+  const elbow = confidentPoint(pose, `${side}_elbow`)
+  const wrist = confidentPoint(pose, `${side}_wrist`)
+  if (!shoulder || !elbow || !wrist) return null
+  return {
+    upper: Math.atan2(elbow.y - shoulder.y, elbow.x - shoulder.x),
+    fore: Math.atan2(wrist.y - elbow.y, wrist.x - elbow.x),
+  }
+}
+
+/**
+ * Extract both arms' segment directions, or null when neither arm is usable.
+ * Uses the same confident-keypoint gate as the rest of the pipeline, so a
+ * half-detected body reports the arms it can and leaves the other side null.
+ */
+export function armPose(pose: Pose): ArmPose | null {
+  const left = limbFor(pose, 'left')
+  const right = limbFor(pose, 'right')
+  if (!left && !right) return null
+  return { left, right }
+}
+
 export function extractMotionKeypoints(pose: Pose): KpMap {
   const map: KpMap = new Map()
   for (const k of pose.keypoints) {
@@ -576,6 +678,10 @@ export class PlayerTracker implements SlotAnchor {
   face: FaceAnchor | null = null
   /** Raw torso geometry for runner gesture control (null when core not visible). */
   posture: RawPosture | null = null
+  /** Both arms' segment directions for the pose-copy mode (null when no arm visible). */
+  arms: ArmPose | null = null
+  /** Running clothing-colour signature — the identity matcher's tie-breaker. */
+  sig: ColorSig | null = null
   /** Latest frame's motion keypoints (full-frame px) — read by the hitmarker FX. */
   motionKp: KpMap | null = null
   framesSinceSeen = Infinity
@@ -627,6 +733,11 @@ export class PlayerTracker implements SlotAnchor {
     // Torso geometry for the runner mode — computed every frame it's visible,
     // independent of scoring (calibration reads it while the bar isn't filling).
     this.posture = bodyPosture(candidate.pose)
+    // Arm directions for the pose-copy mode (same lifetime as the posture).
+    this.arms = armPose(candidate.pose)
+    // Clothing-colour signature (engine-sampled): smooth it so a single noisy
+    // frame can't flip identity, and seed it on the first profiled frame.
+    if (candidate.sig) this.sig = blendSig(this.sig, candidate.sig, alphaFromTau(safeDt, SIG_TAU_S))
 
     const kp = extractMotionKeypoints(candidate.pose)
     if (scoring && this.prevKp && consecutive && dt > 0) {
@@ -682,6 +793,7 @@ export class PlayerTracker implements SlotAnchor {
     this.motionKp = null
     this.face = null
     this.posture = null
+    this.arms = null
     this.speed = 0
     this.framesSinceSeen = Infinity
   }
@@ -691,5 +803,8 @@ export class PlayerTracker implements SlotAnchor {
     this.expire()
     this.lastBBox = null
     this.lastSeenAtMs = -Infinity
+    // Colour signature is re-bind memory (like lastBBox) — kept across a brief
+    // track loss, cleared only on a genuine fresh calibration.
+    this.sig = null
   }
 }

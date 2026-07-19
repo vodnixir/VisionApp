@@ -46,9 +46,16 @@ export const HANDICAP_STEPS = [0, 10, 20, 30] as const
  * Game modes (how movement turns into progress). Round length (RoundMode)
  * composes with any of them.
  */
-export type MatchMode = 'classic' | 'rhythm' | 'endurance' | 'traffic' | 'boss'
+export type MatchMode = 'classic' | 'rhythm' | 'endurance' | 'traffic' | 'pose' | 'boss'
 
-export const MATCH_MODES: MatchMode[] = ['classic', 'rhythm', 'endurance', 'traffic', 'boss']
+export const MATCH_MODES: MatchMode[] = [
+  'classic',
+  'rhythm',
+  'endurance',
+  'traffic',
+  'pose',
+  'boss',
+]
 
 /**
  * The base game and its variants now run ENDLESS — no clock, first to fill the

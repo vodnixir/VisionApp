@@ -4,6 +4,7 @@ import * as poseDetection from '@tensorflow-models/pose-detection'
 import { playerColors } from '../theme'
 import {
   FULL_SCAN_EVERY,
+  KEYPOINT_MIN_SCORE,
   PERSISTENCE_MS,
   PlayerTracker,
   ROI_WARMUP_FRAMES,
@@ -15,8 +16,10 @@ import {
   matchLockedRoles,
   roiTouchesEdge,
   selectFighters,
+  type ArmPose,
   type BBox,
   type Candidate,
+  type ColorSig,
   type RawPosture,
 } from './tracking'
 import {
@@ -36,7 +39,8 @@ export interface EngineConfig {
   /**
    * How many people to track this session — the mode's "maxPoses". 2 keeps the
    * original duel path byte-for-byte (ROI zoom + sticky locked roles); other
-   * counts drive the runner modes with simple positional assignment.
+   * counts (up to 4) drive the runner and group modes with simple positional
+   * assignment.
    */
   maxPlayers?: number
   /** Compute activity speed (only meaningful while a match runs). */
@@ -130,6 +134,8 @@ export interface EnginePlayerFrame {
   speed: number
   /** Raw torso geometry for the single-player runner controls (null if unreliable). */
   posture: RawPosture | null
+  /** Both arms' segment directions for the pose-copy mode (null if unreliable). */
+  arms: ArmPose | null
 }
 
 export interface EngineFrame {
@@ -143,11 +149,103 @@ export interface EngineFrame {
   hints: EngineHints
 }
 
-/** Extra identity colours for runner slots beyond the two duel colours. */
-const MULTI_PLAYER_COLORS = ['#00c3ff', '#ff2e63', '#a3e635']
+/* ---------------- Clothing-colour signature (identity tie-breaker) ---------------- */
 
-/** Player colour for slot i — the theme's duel colours for 0/1, lime for a 3rd. */
-function slotColor(i: number): string {
+/** Downscale width the frame is sampled at for colour signatures (cheap readback). */
+const SIG_SAMPLE_W = 128
+/** Hue histogram resolution; two extra bins catch dark and desaturated (white/grey) clothing. */
+const SIG_HUE_BINS = 12
+/** Below this many sampled pixels the torso patch is too small to trust — no signature. */
+const SIG_MIN_PIXELS = 12
+
+/** sRGB → HSV, each channel 0..1. Hue wraps at 1. */
+function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  r /= 255
+  g /= 255
+  b /= 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  let h = 0
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h /= 6
+    if (h < 0) h += 1
+  }
+  return { h, s: max === 0 ? 0 : d / max, v: max }
+}
+
+/**
+ * The torso patch to sample for a body's colour, in full-frame px: the central
+ * chest→belly band between the shoulders and hips, shrunk inward so arms and
+ * background don't leak in. Falls back to the middle of the bbox when the core
+ * keypoints aren't confident.
+ */
+function torsoRect(cand: Candidate): BBox {
+  const kp = (name: string) => {
+    const k = cand.pose.keypoints.find((p) => p.name === name)
+    return k && (k.score ?? 0) >= KEYPOINT_MIN_SCORE ? k : null
+  }
+  const shoulders = [kp('left_shoulder'), kp('right_shoulder')].filter((p) => p !== null)
+  const hips = [kp('left_hip'), kp('right_hip')].filter((p) => p !== null)
+  if (shoulders.length > 0 && hips.length > 0) {
+    const sy = shoulders.reduce((s, p) => s + p!.y, 0) / shoulders.length
+    const hy = hips.reduce((s, p) => s + p!.y, 0) / hips.length
+    const xs = [...shoulders, ...hips].map((p) => p!.x)
+    const minX = Math.min(...xs)
+    const w = Math.max(...xs) - minX
+    const h = hy - sy
+    return { x: minX + w * 0.2, y: sy + h * 0.15, w: Math.max(1, w * 0.6), h: Math.max(1, h * 0.7) }
+  }
+  const b = cand.bbox
+  return { x: b.x + b.w * 0.3, y: b.y + b.h * 0.28, w: b.w * 0.4, h: b.h * 0.32 }
+}
+
+/** Normalized hue histogram of a body's torso patch, or null if too few pixels. */
+function torsoSignature(
+  cand: Candidate,
+  data: Uint8ClampedArray,
+  sw: number,
+  sh: number,
+  scaleX: number,
+  scaleY: number,
+): ColorSig | null {
+  const r = torsoRect(cand)
+  const x0 = Math.max(0, Math.floor(r.x * scaleX))
+  const y0 = Math.max(0, Math.floor(r.y * scaleY))
+  const x1 = Math.min(sw, Math.ceil((r.x + r.w) * scaleX))
+  const y1 = Math.min(sh, Math.ceil((r.y + r.h) * scaleY))
+  const bins = SIG_HUE_BINS + 2
+  const hist = new Array<number>(bins).fill(0)
+  let count = 0
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const idx = (y * sw + x) * 4
+      const { h, s, v } = rgbToHsv(data[idx], data[idx + 1], data[idx + 2])
+      let bin: number
+      if (v < 0.18) bin = SIG_HUE_BINS // near-black clothing
+      else if (s < 0.2) bin = SIG_HUE_BINS + 1 // white / grey / washed-out
+      else bin = Math.min(SIG_HUE_BINS - 1, Math.floor(h * SIG_HUE_BINS))
+      // Vivid colour is the most identifying signal — weight it up over pale pixels.
+      hist[bin] += 0.3 + 0.7 * s
+      count++
+    }
+  }
+  if (count < SIG_MIN_PIXELS) return null
+  let sum = 0
+  for (const value of hist) sum += value
+  if (sum <= 0) return null
+  for (let i = 0; i < bins; i++) hist[i] /= sum
+  return hist
+}
+
+/** Extra identity colours for slots beyond the two duel colours (runner / group). */
+const MULTI_PLAYER_COLORS = ['#00c3ff', '#ff2e63', '#a3e635', '#f5a623']
+
+/** Player colour for slot i — the theme's duel colours for 0/1, then lime/amber. */
+export function slotColor(i: number): string {
   return playerColors()[i] ?? MULTI_PLAYER_COLORS[i % MULTI_PLAYER_COLORS.length]
 }
 
@@ -190,6 +288,8 @@ export class PoseEngine {
   private lastLuma = 128
   private readonly lumaCanvas = document.createElement('canvas')
   private lumaCtx: CanvasRenderingContext2D | null = null
+  private readonly sigCanvas = document.createElement('canvas')
+  private sigCtx: CanvasRenderingContext2D | null = null
 
   /** Live hitmarker sparks, in mirror-corrected display space. */
   private particles: Particle[] = []
@@ -410,13 +510,16 @@ export class PoseEngine {
       if (!this.running || this.destroyed) return
 
       const config = this.getConfig()
-      const maxPlayers = Math.max(1, Math.min(3, config.maxPlayers ?? 2))
+      const maxPlayers = Math.max(1, Math.min(4, config.maxPlayers ?? 2))
       // Grow/shrink the tracker pool to the mode's player count (a session sets
       // this once; reconciling per frame is cheap and keeps switching robust).
       while (this.trackers.length < maxPlayers) this.trackers.push(new PlayerTracker())
       while (this.trackers.length > maxPlayers) this.trackers.pop()?.reset()
 
       const fighters = selectFighters(poses, maxPlayers)
+      // Colour signatures for the duel's identity matcher (keeps blue/red apart
+      // through a cross); the runner modes don't lock roles, so skip the cost.
+      if (maxPlayers === 2) this.sampleSignatures(fighters, vw, vh)
       // Duel (2p) keeps its exact behaviour: sticky locked roles + positional
       // calibration. Runner modes use plain left-to-right positional slots.
       const roles: (Candidate | null)[] =
@@ -456,6 +559,7 @@ export class PoseEngine {
         bbox: t.bbox,
         speed: t.speed,
         posture: t.posture,
+        arms: t.arms,
       }))
 
       this.onFrame({
@@ -548,6 +652,39 @@ export class PoseEngine {
       this.lastLuma = sum / (data.length / 4)
     } catch {
       /* canvas readback unavailable — keep the previous estimate */
+    }
+  }
+
+  /**
+   * Tag each candidate with a clothing-colour signature, drawn from ONE small
+   * readback of the whole frame per inference. The identity matcher uses these
+   * to keep the blue and red players apart when they cross or briefly occlude —
+   * the fix for "red and left swapped mid-round". Duel-only; the runner modes
+   * assign slots purely by position and don't need it.
+   */
+  private sampleSignatures(candidates: Candidate[], vw: number, vh: number): void {
+    if (candidates.length === 0) return
+    const sw = SIG_SAMPLE_W
+    const sh = Math.max(1, Math.round((sw * vh) / vw))
+    if (this.sigCanvas.width !== sw || this.sigCanvas.height !== sh) {
+      this.sigCanvas.width = sw
+      this.sigCanvas.height = sh
+      this.sigCtx = null
+    }
+    this.sigCtx ??= this.sigCanvas.getContext('2d', { willReadFrequently: true })
+    const ctx = this.sigCtx
+    if (!ctx) return
+    let data: Uint8ClampedArray
+    try {
+      ctx.drawImage(this.video, 0, 0, sw, sh)
+      data = ctx.getImageData(0, 0, sw, sh).data
+    } catch {
+      return // readback blocked (tainted canvas) — matcher stays purely positional
+    }
+    const scaleX = sw / vw
+    const scaleY = sh / vh
+    for (const cand of candidates) {
+      cand.sig = torsoSignature(cand, data, sw, sh, scaleX, scaleY)
     }
   }
 

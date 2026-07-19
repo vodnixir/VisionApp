@@ -1,6 +1,6 @@
 import { t } from '../i18n'
 import { canvasTheme, playerColors } from '../theme'
-import type { BBox } from './tracking'
+import type { BBox, Limb } from './tracking'
 
 /** Everything the canvas HUD needs, updated per inference frame via engine config. */
 export interface HudState {
@@ -32,6 +32,10 @@ export interface HudState {
   bossFlash?: boolean
   /** Panel captions when they differ from the bracket labels (boss: TEAM / BOSS). */
   panelNames?: [string, string]
+  /** Pose-copy mode: the two target arms to draw as a silhouette (undefined = other modes). */
+  poseTarget?: [Limb, Limb]
+  /** Pose-copy mode: each player's live match 0..1, for the per-side hit indicator. */
+  poseMatch?: [number, number]
 }
 
 export const DEFAULT_HUD: HudState = {
@@ -300,7 +304,131 @@ export function drawMatchHud(
     ctx.restore()
   }
 
+  if (hud.poseTarget) drawPoseTarget(ctx, w, h, hud.poseTarget, hud.poseMatch)
+
   if (hud.frozen) drawFreezeBanner(ctx, w, h)
+}
+
+/**
+ * Pose-copy target: a stick figure of the pose the players must strike, centered
+ * below the timer. A colored pip on each side pulses brighter as that player's
+ * live match climbs — instant "you've got it" feedback on the TV and the clip.
+ */
+function drawPoseTarget(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  arms: [Limb, Limb],
+  match?: [number, number],
+): void {
+  const th = canvasTheme()
+  const cx = w / 2
+  const cy = h * 0.37
+  const s = h * 0.1 // unit length
+  const lw = Math.max(4, s * 0.16)
+
+  // Backing panel so the figure reads over any footage.
+  ctx.save()
+  const panelW = s * 3.6
+  const panelH = s * 4.2
+  ctx.globalAlpha = 0.82
+  ctx.fillStyle = th.panelBg
+  roundedRect(ctx, cx - panelW / 2, cy - s * 2.0, panelW, panelH, 16)
+  ctx.fill()
+  ctx.globalAlpha = 1
+
+  // Caption.
+  const capSize = Math.round(s * 0.5)
+  ctx.font = `${th.glow ? 900 : 700} ${capSize}px ${th.font}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = th.glow ? '#ffe600' : th.inkMuted
+  ctx.fillText(t('hud.copyPose'), cx, cy - s * 1.35)
+
+  // Skeleton geometry.
+  const headR = s * 0.36
+  const headC = { x: cx, y: cy - s * 0.75 }
+  const shoulderY = cy - s * 0.2
+  const lShoulder = { x: cx - s * 0.5, y: shoulderY }
+  const rShoulder = { x: cx + s * 0.5, y: shoulderY }
+  const hip = { x: cx, y: cy + s * 1.05 }
+
+  ctx.strokeStyle = th.ink
+  ctx.fillStyle = th.ink
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.lineWidth = lw
+  if (th.glow) {
+    ctx.shadowColor = th.ink
+    ctx.shadowBlur = 10
+  }
+
+  // Head.
+  ctx.beginPath()
+  ctx.arc(headC.x, headC.y, headR, 0, Math.PI * 2)
+  ctx.fill()
+  // Spine.
+  ctx.beginPath()
+  ctx.moveTo(cx, shoulderY - s * 0.05)
+  ctx.lineTo(hip.x, hip.y)
+  // Legs.
+  ctx.moveTo(hip.x, hip.y)
+  ctx.lineTo(cx - s * 0.4, hip.y + s * 1.0)
+  ctx.moveTo(hip.x, hip.y)
+  ctx.lineTo(cx + s * 0.4, hip.y + s * 1.0)
+  // Shoulder bar.
+  ctx.moveTo(lShoulder.x, lShoulder.y)
+  ctx.lineTo(rShoulder.x, rShoulder.y)
+  ctx.stroke()
+
+  // Arms: upper arm along `upper`, forearm along `fore`, each one unit long.
+  const upperLen = s * 0.75
+  const foreLen = s * 0.72
+  const drawArm = (shoulder: { x: number; y: number }, arm: Limb) => {
+    const elbow = {
+      x: shoulder.x + Math.cos(arm.upper) * upperLen,
+      y: shoulder.y + Math.sin(arm.upper) * upperLen,
+    }
+    const wrist = {
+      x: elbow.x + Math.cos(arm.fore) * foreLen,
+      y: elbow.y + Math.sin(arm.fore) * foreLen,
+    }
+    ctx.beginPath()
+    ctx.moveTo(shoulder.x, shoulder.y)
+    ctx.lineTo(elbow.x, elbow.y)
+    ctx.lineTo(wrist.x, wrist.y)
+    ctx.stroke()
+    // Hand dot.
+    ctx.beginPath()
+    ctx.arc(wrist.x, wrist.y, lw * 0.7, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  drawArm(lShoulder, arms[0])
+  drawArm(rShoulder, arms[1])
+  ctx.shadowBlur = 0
+
+  // Per-player match pips flanking the figure.
+  if (match) {
+    const pipY = cy - s * 1.35
+    const drawPip = (x: number, m: number, index: 0 | 1) => {
+      const color = playerColors()[index]
+      const on = m >= 0.85
+      ctx.globalAlpha = 0.35 + 0.65 * Math.min(1, m)
+      ctx.fillStyle = color
+      if (th.glow && on) {
+        ctx.shadowColor = color
+        ctx.shadowBlur = 18
+      }
+      ctx.beginPath()
+      ctx.arc(x, pipY, s * (0.16 + 0.1 * Math.min(1, m)), 0, Math.PI * 2)
+      ctx.fill()
+      ctx.shadowBlur = 0
+      ctx.globalAlpha = 1
+    }
+    drawPip(cx - panelW / 2 + s * 0.35, match[0], 0)
+    drawPip(cx + panelW / 2 - s * 0.35, match[1], 1)
+  }
+  ctx.restore()
 }
 
 /** Pulsing announcement in the upper-middle of the arena (OVERTIME / STOP / GO). */

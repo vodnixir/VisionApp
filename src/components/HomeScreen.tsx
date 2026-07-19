@@ -144,6 +144,13 @@ export function HomeScreen({
           dot: tournamentActive,
         },
         {
+          key: 'group',
+          label: t('home.group'),
+          hint: t('home.groupHint'),
+          Icon: Users,
+          onClick: () => openHashRoute('group'),
+        },
+        {
           key: 'online',
           label: t('home.online'),
           hint: t('home.onlineHint'),

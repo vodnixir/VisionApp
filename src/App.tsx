@@ -80,6 +80,12 @@ function battleRules(
         { emoji: '🔴', text: t('rules.traffic.red') },
         fill,
       ]
+    case 'pose':
+      return [
+        { emoji: '🧍', text: t('rules.pose.copy') },
+        { emoji: '⏱️', text: t('rules.pose.hold') },
+        fill,
+      ]
     case 'boss':
       return [
         { emoji: '🤝', text: t('rules.boss.team') },
@@ -330,8 +336,15 @@ export default function App() {
       }
 
       // Mode layer: how much fill/burn this frame + what just happened.
-      const tick = modeTick(a.modeState, { dt: frame.dt, elapsedMs: elapsed, speeds, rate })
+      const tick = modeTick(a.modeState, {
+        dt: frame.dt,
+        elapsedMs: elapsed,
+        speeds,
+        rate,
+        poses: mode === 'pose' ? [frame.players[0].arms, frame.players[1].arms] : undefined,
+      })
       if (tick.events.beat) sfx.tick()
+      if (tick.events.poseChange) sfx.release()
       if (tick.events.hit) {
         for (const i of [0, 1] as const) {
           if (tick.events.hit[i]) a.beatFlashUntil[i] = frame.now + 220
@@ -417,6 +430,8 @@ export default function App() {
               ])
             : undefined,
         traffic: mode === 'traffic' ? (a.modeState.red ? ('red' as const) : ('green' as const)) : undefined,
+        poseTarget: tick.pose?.target.arms,
+        poseMatch: tick.pose?.match,
         coop: mode === 'boss' ? true : undefined,
         bossFlash: mode === 'boss' && frame.now < a.bossFlashUntil ? true : undefined,
         panelNames:

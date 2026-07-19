@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { GroupMatchScreen } from './components/GroupMatchScreen.tsx'
 import { OnlineBattleScreen } from './components/OnlineBattleScreen.tsx'
 import { RunnerGameScreen } from './components/RunnerGameScreen.tsx'
 import { RunnerSpikeScreen } from './components/RunnerSpikeScreen.tsx'
@@ -14,6 +15,8 @@ import { isShowPage } from './show.ts'
 // #online       → the two-phone WebRTC battle (shared-seed runner race).
 const hash = window.location.hash
 const online = hash.startsWith('#online')
+// #group → the 3–4 player free-for-all (classic scoring, each their own bar).
+const group = hash.startsWith('#group')
 // #online?j=<code> → opened from a shared invite link: prefill the guest flow.
 const inviteMatch = hash.match(/[?&]j=([^&]+)/)
 const invite = inviteMatch ? decodeURIComponent(inviteMatch[1]) : undefined
@@ -33,6 +36,8 @@ createRoot(document.getElementById('root')!).render(
       <ShowScreen />
     ) : online ? (
       <OnlineBattleScreen initialInvite={invite} />
+    ) : group ? (
+      <GroupMatchScreen />
     ) : runnerRoute === 'spike' ? (
       <RunnerSpikeScreen />
     ) : runnerRoute === 'demo' ? (

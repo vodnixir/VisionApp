@@ -9,13 +9,19 @@ import {
   BOSS_ATTACK_DAMAGE_START,
   BOSS_ATTACK_EVERY_MS,
   ENDURANCE_GRACE_MS,
+  POSE_LIBRARY,
+  POSE_PERIOD_MS,
   RHYTHM_PERIOD_MS,
   RHYTHM_WINDOW_MS,
   TRAFFIC_GREEN_MIN_MS,
+  TRAFFIC_RED_MIN_MS,
+  angleDelta,
   bossCharge,
   createModeState,
   modeTick,
+  poseSimilarity,
 } from '../src/modes'
+import type { ArmPose } from '../src/cv/tracking'
 import {
   HIGHLIGHT_TARGET_MS,
   PORTRAIT_H,
@@ -38,13 +44,16 @@ import {
   REBIND_WINDOW_MS,
   amplitudeFactor,
   assignRolesN,
+  blendSig,
   computeRoi,
   iou,
   matchLockedRoles,
   motionDelta,
   roiTouchesEdge,
+  sigDistance,
   type BBox,
   type Candidate,
+  type ColorSig,
   type KpMap,
   type SlotAnchor,
 } from '../src/cv/tracking'
@@ -80,17 +89,27 @@ async function okAsync(name: string, fn: () => Promise<void>): Promise<void> {
   console.log(`  ✓ ${name}`)
 }
 
-function mkCand(x: number, y: number, w: number, h: number): Candidate {
+function mkCand(x: number, y: number, w: number, h: number, sig?: ColorSig): Candidate {
   return {
     pose: { score: 1, keypoints: [] },
     bbox: { x, y, w, h },
     anchorX: x + w / 2,
+    sig,
   }
 }
 
-function slot(bbox: BBox | null, lastBBox: BBox | null = bbox, lastSeenAgoMs = 0): SlotAnchor {
-  return { bbox, lastBBox, lastSeenAtMs: NOW - lastSeenAgoMs }
+function slot(
+  bbox: BBox | null,
+  lastBBox: BBox | null = bbox,
+  lastSeenAgoMs = 0,
+  sig: ColorSig | null = null,
+): SlotAnchor {
+  return { bbox, lastBBox, lastSeenAtMs: NOW - lastSeenAgoMs, sig }
 }
+
+/** Two maximally-different signatures for the colour-identity tests. */
+const RED_SIG: ColorSig = [1, 0, 0, 0]
+const BLUE_SIG: ColorSig = [0, 0, 0, 1]
 
 const NOW = 100_000
 const VW = 1280
@@ -266,6 +285,52 @@ ok('unclaimed candidate fills a genuinely free slot, never steals an anchored on
   const [a, b] = matchLockedRoles(slots, [near, stranger], NOW, VW, false)
   assert.equal(a, near)
   assert.equal(b, stranger, 'stranger takes the free seat, not the anchored one')
+})
+
+console.log('colour identity (anti-swap)')
+
+ok('sigDistance: identical → 0, disjoint → 1, missing → 0 (neutral)', () => {
+  assert.equal(sigDistance(RED_SIG, RED_SIG), 0)
+  assert.equal(sigDistance(RED_SIG, BLUE_SIG), 1)
+  assert.equal(sigDistance(null, RED_SIG), 0, 'unprofiled body is never penalized')
+  const half: ColorSig = [0.5, 0, 0, 0.5]
+  assert.ok(Math.abs(sigDistance(RED_SIG, half) - 0.5) < 1e-9, 'partial overlap is partial distance')
+})
+
+ok('blendSig seeds on the first sample, then eases toward new ones', () => {
+  const seeded = blendSig(null, RED_SIG, 0.5)
+  assert.deepEqual(seeded, RED_SIG, 'first sample is taken as-is')
+  const eased = blendSig(RED_SIG, BLUE_SIG, 0.5)
+  assert.deepEqual(eased, [0.5, 0, 0, 0.5], 'halfway between old and new')
+})
+
+ok('colour rescues identity when a cross makes position point the wrong way', () => {
+  // Slot 0 = the RED player, slot 1 = the BLUE player, both anchored close
+  // together. Mid-cross the bodies have nearly swapped X, so the nearest-anchor
+  // pairing would hand each slot the WRONG body — colour must overrule it.
+  const slots: [SlotAnchor, SlotAnchor] = [
+    slot({ x: 300, y: 100, w: 100, h: 250 }, undefined, 0, RED_SIG), // red anchor, left-ish
+    slot({ x: 360, y: 100, w: 100, h: 250 }, undefined, 0, BLUE_SIG), // blue anchor, right-ish
+  ]
+  // The red body is now on the right (near the blue anchor); blue on the left.
+  const redBody = mkCand(355, 105, 100, 250, RED_SIG)
+  const blueBody = mkCand(305, 105, 100, 250, BLUE_SIG)
+  const [a, b] = matchLockedRoles(slots, [blueBody, redBody], NOW, VW, false)
+  assert.equal(a, redBody, 'slot 0 keeps the RED body despite it being the far one')
+  assert.equal(b, blueBody, 'slot 1 keeps the BLUE body')
+})
+
+ok('without signatures the matcher still falls back to nearest-anchor', () => {
+  // Same geometry, no colours: position alone decides (the old behaviour).
+  const slots: [SlotAnchor, SlotAnchor] = [
+    slot({ x: 300, y: 100, w: 100, h: 250 }),
+    slot({ x: 360, y: 100, w: 100, h: 250 }),
+  ]
+  const bodyNearSlot0 = mkCand(305, 105, 100, 250)
+  const bodyNearSlot1 = mkCand(355, 105, 100, 250)
+  const [a, b] = matchLockedRoles(slots, [bodyNearSlot1, bodyNearSlot0], NOW, VW, false)
+  assert.equal(a, bodyNearSlot0, 'nearest body to slot 0 wins when no colour is known')
+  assert.equal(b, bodyNearSlot1)
 })
 
 console.log('ROI')
@@ -465,7 +530,8 @@ ok('endurance: grace absorbs short dips, then the bar burns', () => {
 })
 
 ok('traffic: deterministic light schedule, red burns movement', () => {
-  const s = createModeState('traffic', () => 0) // greens = 3000ms, reds = 1800ms
+  // rng()=0 → green lasts exactly TRAFFIC_GREEN_MIN_MS, red exactly TRAFFIC_RED_MIN_MS.
+  const s = createModeState('traffic', () => 0)
   const tick = (elapsedMs: number) =>
     modeTick(s, { dt: 0.03, elapsedMs, speeds: [0.8, 0.8], rate: 6.5 }, () => 0)
   const green = tick(1000)
@@ -473,7 +539,7 @@ ok('traffic: deterministic light schedule, red burns movement', () => {
   const flip = tick(TRAFFIC_GREEN_MIN_MS + 1)
   assert.equal(flip.events.trafficSwitch, 'red')
   assert.ok(flip.burn[0] > 0 && flip.fill[0] === 0, 'moving on red burns')
-  const back = tick(TRAFFIC_GREEN_MIN_MS + 1801)
+  const back = tick(TRAFFIC_GREEN_MIN_MS + TRAFFIC_RED_MIN_MS + 1)
   assert.equal(back.events.trafficSwitch, 'green')
 })
 
@@ -491,6 +557,61 @@ ok('boss: attacks land on schedule and grow; charge maps 0→100', () => {
   // Team fill combines both players.
   const fill = tick(BOSS_ATTACK_EVERY_MS * 2 + 500)
   assert.ok(fill.fill[0] > 0 && fill.fill[1] === 0)
+})
+
+ok('angleDelta is the shortest circular gap, symmetric and wrap-around', () => {
+  const TAU = Math.PI * 2
+  assert.ok(Math.abs(angleDelta(0, TAU)) < 1e-9, 'a full turn is zero apart')
+  assert.ok(Math.abs(angleDelta(-Math.PI / 2, (3 * Math.PI) / 2)) < 1e-9, 'wraps the long way')
+  assert.ok(Math.abs(angleDelta(0, Math.PI) - Math.PI) < 1e-9, 'opposite = π')
+  assert.ok(Math.abs(angleDelta(1, 2) - angleDelta(2, 1)) < 1e-9, 'symmetric')
+})
+
+ok('poseSimilarity: exact copy scores 1, an opposite pose scores 0', () => {
+  const target = POSE_LIBRARY[0] // tpose: arms out to the sides
+  const exact: ArmPose = { left: { ...target.arms[0] }, right: { ...target.arms[1] } }
+  assert.ok(poseSimilarity(exact, target) > 0.99, 'a dead-on copy maxes out')
+  // Arms straight down (90°) are ~90° off every horizontal target segment → 0.
+  const down: ArmPose = {
+    left: { upper: Math.PI / 2, fore: Math.PI / 2 },
+    right: { upper: Math.PI / 2, fore: Math.PI / 2 },
+  }
+  assert.equal(poseSimilarity(down, target), 0, 'a wrong pose earns nothing')
+  assert.equal(poseSimilarity(null, target), 0, 'no tracking → 0')
+})
+
+ok('poseSimilarity matches by best arm pairing (mirror-invariant)', () => {
+  const target = POSE_LIBRARY[2] // yShape: one arm up-left, one up-right
+  // Feed the arms swapped between sides — best pairing must still score 1.
+  const swapped: ArmPose = { left: { ...target.arms[1] }, right: { ...target.arms[0] } }
+  assert.ok(poseSimilarity(swapped, target) > 0.99, 'which side is which never matters')
+  // A single visible arm that matches one target arm still gets full single credit.
+  const oneArm: ArmPose = { left: { ...target.arms[0] }, right: null }
+  assert.ok(poseSimilarity(oneArm, target) > 0.99, 'an occluded arm never zeroes an honest try')
+})
+
+ok('pose mode: only a good copy fills, and the target rotates on schedule', () => {
+  const s = createModeState('pose', () => 0) // deterministic: starts on pose 0
+  const good = POSE_LIBRARY[0]
+  const goodArms: [ArmPose, ArmPose] = [
+    { left: { ...good.arms[0] }, right: { ...good.arms[1] } },
+    { left: { upper: Math.PI / 2, fore: Math.PI / 2 }, right: { upper: Math.PI / 2, fore: Math.PI / 2 } },
+  ]
+  const early = modeTick(s, { dt: 0.1, elapsedMs: 100, speeds: [0, 0], rate: 6.5, poses: goodArms })
+  assert.equal(early.pose?.index, 0, 'shows the first pose')
+  assert.ok(early.fill[0] > 0, 'the matching player fills')
+  assert.equal(early.fill[1], 0, 'the mismatched player earns nothing')
+  assert.ok((early.pose?.match[0] ?? 0) > 0.99 && (early.pose?.match[1] ?? 1) < 0.1)
+  // Past the period the target flips to a different pose with a change event.
+  const flip = modeTick(s, {
+    dt: 0.1,
+    elapsedMs: POSE_PERIOD_MS + 1,
+    speeds: [0, 0],
+    rate: 6.5,
+    poses: goodArms,
+  })
+  assert.ok(flip.events.poseChange, 'a new pose is announced')
+  assert.notEqual(flip.pose?.index, 0, 'and it is a different pose')
 })
 
 ok('overtime tie detection honors the epsilon', () => {

@@ -5,6 +5,7 @@ import {
   Flame,
   FlipHorizontal2,
   Music,
+  PersonStanding,
   Skull,
   Smile,
   Snowflake,
@@ -38,6 +39,7 @@ const MODE_ICONS: Record<MatchMode, React.ReactNode> = {
   rhythm: <Music className="size-4" aria-hidden />,
   endurance: <Activity className="size-4" aria-hidden />,
   traffic: <TrafficCone className="size-4" aria-hidden />,
+  pose: <PersonStanding className="size-4" aria-hidden />,
   boss: <Skull className="size-4" aria-hidden />,
 }
 
