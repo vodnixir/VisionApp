@@ -21,7 +21,7 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
       <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
         <span
           key={countdown}
-          className="countdown-digit animate-countdown-pop text-[9rem] font-bold leading-none sm:text-[16rem]"
+          className="countdown-digit animate-countdown-pop text-[9rem] font-bold leading-none sm:text-[16rem] landscape:text-[6rem] landscape:sm:text-[9rem]"
         >
           {countdown}
         </span>
@@ -31,15 +31,15 @@ export function CalibrationOverlay({ phase, presentCount, lockProgress, countdow
 
   const locking = phase === 'LOCKING'
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4 sm:bottom-12">
-      <div className="overlay-panel flex w-full max-w-md flex-col items-center gap-3 rounded-2xl px-6 py-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4 sm:bottom-12 landscape:bottom-3">
+      <div className="overlay-panel flex max-h-[40vh] w-full max-w-md flex-col items-center gap-3 overflow-y-auto rounded-2xl px-6 py-4 landscape:max-h-[80vh] landscape:gap-2 landscape:px-5 landscape:py-2.5">
         <div className="flex items-center gap-3">
           {locking ? (
-            <ScanLine className="size-6 text-dot sm:size-8" aria-hidden />
+            <ScanLine className="size-6 text-dot sm:size-8 landscape:size-5" aria-hidden />
           ) : (
-            <Users className="size-6 animate-pulse text-t2 sm:size-8" aria-hidden />
+            <Users className="size-6 animate-pulse text-t2 sm:size-8 landscape:size-5" aria-hidden />
           )}
-          <span className="text-sm font-semibold text-t1 sm:text-xl">
+          <span className="text-sm font-semibold text-t1 sm:text-xl landscape:text-sm">
             {locking ? t('cal.locking') : t('cal.searching')}
           </span>
         </div>

@@ -128,7 +128,7 @@ export function poseSimilarity(pose: ArmPose | null, target: PoseTarget): number
 }
 
 /** Pick a target different from the current one, uniform over the rest. */
-function nextPoseIndex(prev: number, rng: () => number): number {
+export function nextPoseIndex(prev: number, rng: () => number): number {
   if (POSE_LIBRARY.length <= 1) return 0
   let i = Math.floor(rng() * (POSE_LIBRARY.length - 1))
   if (i >= prev) i++
@@ -154,6 +154,8 @@ export interface ModeState {
   /** traffic: current light and when it flips (elapsed ms). */
   red: boolean
   switchAtMs: number
+  /** traffic: multiplier on every phase duration (the pause-speed setting). */
+  trafficFactor: number
   /** boss: next attack time and how many landed already. */
   attackAtMs: number
   attackNumber: number
@@ -162,7 +164,17 @@ export interface ModeState {
   poseSwitchAtMs: number
 }
 
-export function createModeState(mode: MatchMode, rng: () => number = Math.random): ModeState {
+/**
+ * @param trafficFactor Multiplier on traffic-light phase durations — the
+ *   host's Fast/Normal/Slow pause-speed setting (PAUSE_SPEED_FACTOR in
+ *   types.ts). Defaults to 1 (unscaled) so every existing caller/test that
+ *   doesn't pass it keeps behaving exactly as before.
+ */
+export function createModeState(
+  mode: MatchMode,
+  rng: () => number = Math.random,
+  trafficFactor = 1,
+): ModeState {
   return {
     mode,
     beatIndex: -1,
@@ -170,7 +182,8 @@ export function createModeState(mode: MatchMode, rng: () => number = Math.random
     lastElapsedMs: 0,
     dipMs: [0, 0],
     red: false,
-    switchAtMs: TRAFFIC_GREEN_MIN_MS + rng() * TRAFFIC_GREEN_VAR_MS,
+    switchAtMs: (TRAFFIC_GREEN_MIN_MS + rng() * TRAFFIC_GREEN_VAR_MS) * trafficFactor,
+    trafficFactor,
     attackAtMs: BOSS_ATTACK_EVERY_MS,
     attackNumber: 0,
     poseIndex: Math.min(POSE_LIBRARY.length - 1, Math.floor(rng() * POSE_LIBRARY.length)),
@@ -279,8 +292,8 @@ export function modeTick(
         state.switchAtMs =
           elapsedMs +
           (state.red
-            ? TRAFFIC_RED_MIN_MS + rng() * TRAFFIC_RED_VAR_MS
-            : TRAFFIC_GREEN_MIN_MS + rng() * TRAFFIC_GREEN_VAR_MS)
+            ? (TRAFFIC_RED_MIN_MS + rng() * TRAFFIC_RED_VAR_MS) * state.trafficFactor
+            : (TRAFFIC_GREEN_MIN_MS + rng() * TRAFFIC_GREEN_VAR_MS) * state.trafficFactor)
       }
       for (const i of [0, 1] as const) {
         if (state.red) burn[i] = speeds[i] * rate * dt * TRAFFIC_RED_BURN

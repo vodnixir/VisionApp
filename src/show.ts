@@ -196,7 +196,7 @@ export class ShowCast {
       }
     }
 
-    const win = window.open(showUrl(), 'speed-battle-show', 'width=960,height=540')
+    const win = window.open(showUrl(), 'hitbox-show', 'width=960,height=540')
     if (!win) {
       this.setStatus('idle')
       return

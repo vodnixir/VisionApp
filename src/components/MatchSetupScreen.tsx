@@ -23,6 +23,7 @@ import { playerColorsUI } from '../theme'
 import {
   HANDICAP_STEPS,
   MATCH_MODES,
+  PAUSE_SPEEDS,
   ROUND_DURATION_MS,
   ROUND_MODES,
   SENSITIVITIES,
@@ -33,6 +34,9 @@ import {
   type PlayerSlot,
   type RoundMode,
 } from '../types'
+
+/** Speed Battle's player-count picker: 2 stays here, 3/4 hand off to Group. */
+const SPEED_BATTLE_COUNTS = [2, 3, 4] as const
 
 const MODE_ICONS: Record<MatchMode, React.ReactNode> = {
   classic: <Swords className="size-4" aria-hidden />,
@@ -152,6 +156,40 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
           </div>
         </div>
 
+        {/* Speed Battle (classic) only: 3/4 players hand off to the group
+            free-for-all screen entirely — it has its own complete flow
+            (calibration/rules/scoring) built for N anonymous bodies, so this
+            never tries to cram a 3rd/4th named player into the 2-slot
+            picker above. 2 just stays right here on the normal duel flow. */}
+        {settings.matchMode === 'classic' && (
+          <div className="rounded-2xl border border-edge bg-card p-4">
+            <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+              {t('setup.playerCount').toUpperCase()}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {SPEED_BATTLE_COUNTS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => {
+                    if (n === 2) return
+                    window.location.hash = `group?count=${n}`
+                    window.location.reload()
+                  }}
+                  className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                    n === 2
+                      ? 'border-sel bg-selbg text-sel'
+                      : 'border-edge text-t2 hover:border-edge2'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-t3">{t('setup.playerCountHint')}</p>
+          </div>
+        )}
+
         <div className="rounded-2xl border border-edge bg-card p-4">
           <p className="mb-3 text-xs font-medium tracking-wider text-t3">
             {t('setup.round').toUpperCase()}
@@ -178,6 +216,31 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
             ))}
           </div>
         </div>
+
+        {/* Traffic-light only: how fast the light cycles this round. */}
+        {settings.matchMode === 'traffic' && (
+          <div className="rounded-2xl border border-edge bg-card p-4">
+            <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+              {t('setup.pauseSpeed').toUpperCase()}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {PAUSE_SPEEDS.map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  onClick={() => onPatch({ pauseSpeed: speed })}
+                  className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                    settings.pauseSpeed === speed
+                      ? 'border-sel bg-selbg text-sel'
+                      : 'border-edge text-t2 hover:border-edge2'
+                  }`}
+                >
+                  {t(`pause.${speed}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-edge bg-card p-4">
           <p className="mb-3 text-xs font-medium tracking-wider text-t3">

@@ -408,3 +408,164 @@ body,
     background-position: 0% 50%;
   }
 }
+
+/* ---------- Hitbox welcome screen ----------
+   Deliberately NOT theme-aware: this is a one-time first-impression splash,
+   always the same high-energy neon look regardless of the light/dark/neon
+   theme the user later picks on Home. --tk-* CSS vars are scoped to
+   :root[data-theme=...] and would only be right some of the time here, so
+   colors are hardcoded rather than reused from the theme system. */
+
+.welcome-title {
+  font-family: Orbitron, 'Segoe UI', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.welcome-title-a {
+  color: #00c3ff;
+  text-shadow:
+    0 0 10px rgba(0, 195, 255, 0.9),
+    0 0 32px rgba(0, 195, 255, 0.5);
+}
+
+.welcome-title-b {
+  color: #ffffff;
+  text-shadow:
+    0 0 10px rgba(255, 255, 255, 0.85),
+    0 0 26px rgba(120, 180, 255, 0.5);
+}
+
+/* Two blurred neon blobs behind the hero — same drift keyframes as the menu
+   backdrop, hardcoded colors instead of the theme's CSS vars. */
+.welcome-glow {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.9;
+  mix-blend-mode: screen;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.welcome-glow-a {
+  top: -20vmax;
+  left: -16vmax;
+  background: radial-gradient(circle, rgba(0, 195, 255, 0.4), transparent 62%);
+  animation: glow-drift-a 18s ease-in-out infinite alternate;
+}
+
+.welcome-glow-b {
+  bottom: -22vmax;
+  right: -18vmax;
+  background: radial-gradient(circle, rgba(255, 46, 99, 0.3), transparent 62%);
+  animation: glow-drift-b 22s ease-in-out infinite alternate;
+}
+
+/* Rotating laser-ray backdrop behind the button. */
+.welcome-rays {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150vmax;
+  height: 150vmax;
+  transform: translate(-50%, -50%);
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(0, 195, 255, 0.12) 0deg 2deg,
+    transparent 2deg 18deg,
+    rgba(255, 46, 99, 0.09) 18deg 20deg,
+    transparent 20deg 36deg
+  );
+  animation: welcome-rays-spin 50s linear infinite;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+@keyframes welcome-rays-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+/* The circular "PLAY / tap to start" CTA — the welcome screen's one job. */
+.welcome-play {
+  position: relative;
+  width: clamp(180px, 46vmin, 260px);
+  height: clamp(180px, 46vmin, 260px);
+  border-radius: 9999px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  background: radial-gradient(circle at 50% 38%, rgba(0, 195, 255, 0.22), rgba(5, 6, 15, 0.94) 72%);
+  box-shadow:
+    0 0 0 2px rgba(0, 195, 255, 0.55),
+    0 0 30px rgba(0, 195, 255, 0.5),
+    0 0 70px rgba(0, 195, 255, 0.28),
+    inset 0 0 40px rgba(0, 195, 255, 0.12);
+  animation: welcome-play-pulse 2.4s ease-in-out infinite;
+  transition: transform 0.12s ease;
+}
+
+.welcome-play:active {
+  transform: scale(0.96);
+}
+
+.welcome-play-icon {
+  color: #ffe066;
+  filter: drop-shadow(0 0 10px rgba(255, 224, 102, 0.9));
+}
+
+.welcome-play-label {
+  font-family: Orbitron, 'Segoe UI', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  font-size: clamp(1.4rem, 6vmin, 2.1rem);
+  color: #ffffff;
+  text-shadow: 0 0 12px rgba(0, 195, 255, 0.7);
+}
+
+.welcome-play-sub {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+}
+
+@keyframes welcome-play-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(0, 195, 255, 0.55),
+      0 0 30px rgba(0, 195, 255, 0.5),
+      0 0 70px rgba(0, 195, 255, 0.28),
+      inset 0 0 40px rgba(0, 195, 255, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(163, 230, 53, 0.6),
+      0 0 45px rgba(163, 230, 53, 0.55),
+      0 0 95px rgba(124, 58, 237, 0.4),
+      inset 0 0 55px rgba(0, 195, 255, 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-glow-a,
+  .welcome-glow-b,
+  .welcome-rays,
+  .welcome-play {
+    animation: none;
+  }
+}

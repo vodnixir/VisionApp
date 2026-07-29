@@ -103,19 +103,24 @@ export function drawScoreboard(
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     if (th.glow) {
-      // The original two-tone arcade wordmark.
+      // The two-tone arcade wordmark — widths measured (not hardcoded) so the
+      // pair stays centered regardless of how long each word is.
       ctx.font = `900 ${Math.round(H * 0.11)}px ${th.font}`
+      const wHit = ctx.measureText('HIT').width
+      const wBox = ctx.measureText('BOX').width
+      const gap = H * 0.015
+      const leftEdge = W / 2 - (wHit + gap + wBox) / 2
       ctx.fillStyle = '#00c3ff'
       ctx.shadowColor = '#00c3ff'
       ctx.shadowBlur = 24
-      ctx.fillText('SPEED', W / 2 - H * 0.19, H * 0.42)
+      ctx.fillText('HIT', leftEdge + wHit / 2, H * 0.42)
       ctx.fillStyle = '#ffffff'
       ctx.shadowBlur = 0
-      ctx.fillText('BATTLE', W / 2 + H * 0.21, H * 0.42)
+      ctx.fillText('BOX', leftEdge + wHit + gap + wBox / 2, H * 0.42)
     } else {
       ctx.font = `700 ${Math.round(H * 0.1)}px ${th.font}`
       ctx.fillStyle = th.board.ink
-      ctx.fillText('Speed Battle', W / 2, H * 0.42)
+      ctx.fillText('Hitbox', W / 2, H * 0.42)
     }
     ctx.font = `${th.glow ? 600 : 500} ${Math.round(H * 0.038)}px ${th.font}`
     ctx.fillStyle = th.board.muted

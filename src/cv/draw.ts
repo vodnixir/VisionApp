@@ -314,7 +314,7 @@ export function drawMatchHud(
  * below the timer. A colored pip on each side pulses brighter as that player's
  * live match climbs — instant "you've got it" feedback on the TV and the clip.
  */
-function drawPoseTarget(
+export function drawPoseTarget(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,

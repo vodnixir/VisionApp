@@ -19,11 +19,13 @@
  * pattern — the host is impolite, the guest is polite.
  *
  * The first handshake's ICE is non-trickle: we wait for gathering to finish
- * (bounded by a timeout) so every candidate is baked into the single SDP the
- * code carries. STUN alone only works on friendly networks (same simple Wi-Fi);
- * a TURN relay — configured via VITE_TURN_* env vars at build time — is what
- * makes phones on different networks (mobile data, CGNAT, symmetric NAT)
- * actually connect.
+ * (bounded by a timeout, and also resolving early once the null "end of
+ * candidates" event fires — see waitIce) so every candidate is baked into the
+ * single SDP the code carries. STUN alone only works on friendly networks
+ * (same simple Wi-Fi); a TURN relay — either VITE_TURN_* env vars at build
+ * time, or the TURN_SERVER_PLACEHOLDER constant below for local testing — is
+ * what makes phones on different networks (mobile data, CGNAT, symmetric NAT,
+ * strict corporate/school firewalls) actually connect to each other globally.
  */
 import { packSignal, unpackSignal, type NetMessage } from './protocol'
 
@@ -39,28 +41,58 @@ export interface NetCallbacks {
   onState?: (state: ConnState) => void
 }
 
-// TURN relay (e.g. a free metered.ca "Open Relay" account). Baked in at build
-// time: locally via .env.local, on GitHub Pages via repo secrets (deploy.yml).
-// VITE_TURN_URL may hold several comma-separated turn:/turns: URLs.
+/**
+ * STUN (free, Google-hosted; two for redundancy — either is enough on its
+ * own, but a lone server is a single point of failure for every match this
+ * app will ever run). STUN only tells each peer its OWN public address, which
+ * is enough for two phones on "friendly" NATs (most home Wi-Fi) to connect
+ * directly. It does nothing for symmetric NAT, strict corporate/school
+ * firewalls, or most mobile-carrier CGNAT — those need a TURN relay to
+ * actually forward the media/data, see below.
+ */
+const STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+]
+
+/**
+ * Hardcoded TURN placeholder for quick local testing — fill this in with your
+ * own relay and it's picked up immediately, no env setup required. Leave it
+ * `null` to rely on the env-var path below (recommended for anything that
+ * gets committed, since it keeps real credentials out of source control).
+ * Free relay: https://www.metered.ca (Open Relay, 20 GB/month free).
+ */
+const TURN_SERVER_PLACEHOLDER: RTCIceServer | null = null
+// Example:
+// const TURN_SERVER_PLACEHOLDER: RTCIceServer = {
+//   urls: ['turn:your.turn.server:3478', 'turns:your.turn.server:5349?transport=tcp'],
+//   username: 'your-username',
+//   credential: 'your-credential',
+// }
+
+// TURN relay baked in at build time: locally via .env.local, on GitHub Pages
+// via repo secrets (deploy.yml). Takes priority over TURN_SERVER_PLACEHOLDER
+// above when present. VITE_TURN_URL may hold several comma-separated
+// turn:/turns: URLs.
 const TURN_URL: string = import.meta.env.VITE_TURN_URL ?? ''
 const TURN_USERNAME: string = import.meta.env.VITE_TURN_USERNAME ?? ''
 const TURN_CREDENTIAL: string = import.meta.env.VITE_TURN_CREDENTIAL ?? ''
 
-/** Whether a TURN relay is baked into this build (UI warns when it isn't). */
-export const TURN_CONFIGURED = Boolean(TURN_URL && TURN_USERNAME && TURN_CREDENTIAL)
+const ENV_TURN_SERVER: RTCIceServer | null =
+  TURN_URL && TURN_USERNAME && TURN_CREDENTIAL
+    ? {
+        urls: TURN_URL.split(',').map((u) => u.trim()),
+        username: TURN_USERNAME,
+        credential: TURN_CREDENTIAL,
+      }
+    : null
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  ...(TURN_CONFIGURED
-    ? [
-        {
-          urls: TURN_URL.split(',').map((u) => u.trim()),
-          username: TURN_USERNAME,
-          credential: TURN_CREDENTIAL,
-        },
-      ]
-    : []),
-]
+const TURN_SERVER: RTCIceServer | null = ENV_TURN_SERVER ?? TURN_SERVER_PLACEHOLDER
+
+/** Whether a TURN relay is baked into this build (UI warns when it isn't). */
+export const TURN_CONFIGURED = TURN_SERVER !== null
+
+const ICE_SERVERS: RTCIceServer[] = [...STUN_SERVERS, ...(TURN_SERVER ? [TURN_SERVER] : [])]
 /**
  * Hard cap on waiting for ICE gathering — some browsers never emit 'complete'.
  * Generous on purpose: cutting it short bakes an incomplete candidate set into
@@ -126,7 +158,8 @@ export class OnlineConnection {
         await this.pc.setLocalDescription()
         this.sendRaw({ t: 'sdp', sdp: this.pc.localDescription!.toJSON() })
       } catch {
-        /* the peer may have vanished mid-renegotiation */
+        /* the peer may have vanished mid-renegotiation, or a collision rolled
+           this offer back — the next negotiationneeded recovers either way */
       } finally {
         this.makingOffer = false
       }
@@ -165,14 +198,23 @@ export class OnlineConnection {
     return this.videoSender !== null
   }
 
-  /** Apply a renegotiation offer/answer that arrived over the channel. */
+  /**
+   * Apply a renegotiation offer/answer that arrived over the channel.
+   * Perfect negotiation: if both sides offered at once, the impolite peer
+   * ignores the incoming offer and lets its own stand; the POLITE peer must
+   * roll its own pending offer back first (`setLocalDescription({type:
+   * 'rollback'})`) — without that, calling setRemoteDescription(offer) while
+   * still sitting in 'have-local-offer' is exactly the "Called in wrong
+   * state" crash, just triggered by simultaneous renegotiation (e.g. both
+   * phones' cameras restart at once after being backgrounded) instead of the
+   * first handshake.
+   */
   private async onRemoteSdp(sdp: RTCSessionDescriptionInit): Promise<void> {
-    // Perfect negotiation: if both sides offered at once, the impolite peer
-    // ignores the incoming offer and lets its own stand.
     const collision =
       sdp.type === 'offer' && (this.makingOffer || this.pc.signalingState !== 'stable')
     if (collision && !this.polite) return
     try {
+      if (collision) await this.pc.setLocalDescription({ type: 'rollback' })
       await this.pc.setRemoteDescription(sdp)
       if (sdp.type === 'offer') {
         await this.pc.setLocalDescription()
@@ -191,20 +233,58 @@ export class OnlineConnection {
     return packSignal({ kind: 'offer', sdp: this.pc.localDescription! })
   }
 
-  /** Host step 2 — apply the answer code the friend sent back. */
+  /**
+   * Host step 2 — apply the answer code the friend sent back.
+   *
+   * Guarded against the classic "Failed to execute 'setRemoteDescription' …
+   * Called in wrong state: stable" crash: that error fires when this is
+   * called a second time (a double-tap on Connect, or a stale retry after a
+   * page that didn't fully reset) once the FIRST call already moved the
+   * connection out of 'have-local-offer'. We check the state up front instead
+   * of letting the browser throw a raw DOMException the UI can't explain.
+   */
   async acceptAnswer(code: string): Promise<void> {
     const { kind, sdp } = await unpackSignal(code)
     if (kind !== 'answer') throw new Error('Нужен код-ОТВЕТ от соперника')
-    await this.pc.setRemoteDescription(sdp)
+    if (this.pc.signalingState === 'stable') {
+      // The answer was already applied (duplicate submit) — nothing to do,
+      // not an error the host needs to see.
+      return
+    }
+    if (this.pc.signalingState !== 'have-local-offer') {
+      throw new Error(
+        'Подключение уже в другом состоянии — начните заново: "Назад" и создайте приглашение снова.',
+      )
+    }
+    try {
+      await this.pc.setRemoteDescription(sdp)
+    } catch {
+      throw new Error('Не удалось применить ответ соперника. Проверьте код и попробуйте снова.')
+    }
   }
 
-  /** Guest — apply the host's offer code and produce the answer code to send back. */
+  /**
+   * Guest — apply the host's offer code and produce the answer code to send
+   * back. Same state guard as acceptAnswer: a fresh guest connection is
+   * always 'stable' right before its first (and only) setRemoteDescription
+   * call here, so anything else means this ran twice or the connection is
+   * already mid-negotiation — fail with a message instead of crashing.
+   */
   async acceptOffer(code: string): Promise<string> {
     this.cb.onState?.('connecting')
     const { kind, sdp } = await unpackSignal(code)
     if (kind !== 'offer') throw new Error('Нужен код-ПРИГЛАШЕНИЕ от хоста')
-    await this.pc.setRemoteDescription(sdp)
-    await this.pc.setLocalDescription(await this.pc.createAnswer())
+    if (this.pc.signalingState !== 'stable') {
+      throw new Error(
+        'Этот код уже применён или подключение в другом состоянии — обновите страницу и попробуйте снова.',
+      )
+    }
+    try {
+      await this.pc.setRemoteDescription(sdp)
+      await this.pc.setLocalDescription(await this.pc.createAnswer())
+    } catch {
+      throw new Error('Не удалось обработать код приглашения. Проверьте код и попробуйте снова.')
+    }
     await this.waitIce()
     return packSignal({ kind: 'answer', sdp: this.pc.localDescription! })
   }
@@ -283,7 +363,14 @@ export class OnlineConnection {
 
       const onCandidate = (e: RTCPeerConnectionIceEvent) => {
         const c = e.candidate?.candidate
-        if (!c) return // null candidate = gathering finished
+        if (!c) {
+          // A null candidate IS the standard end-of-gathering signal (per
+          // spec) — some browsers fire this without ever flipping
+          // icegatheringstatechange to 'complete', so finish immediately
+          // here too rather than depending solely on that other event.
+          finish()
+          return
+        }
         if (c.includes('typ srflx')) sawSrflx = true
         else if (c.includes('typ relay')) sawRelay = true
         if (enough() && !settle) settle = setTimeout(finish, ICE_SETTLE_MS)

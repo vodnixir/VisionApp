@@ -84,6 +84,25 @@ export const SENSITIVITY_FACTOR: Record<Sensitivity, number> = {
   high: 1.5,
 }
 
+/* ---------------- Pause speed (traffic-light mode's light cycle) ---------------- */
+
+/**
+ * How fast the "Red Light, Green Light" light cycles — a pre-match dial on
+ * top of the fixed TRAFFIC_* base durations in modes.ts (see
+ * PAUSE_SPEED_FACTOR). Fast means shorter green/red windows (a twitchier,
+ * more reflex-heavy round); Slow gives everyone more time to react each way.
+ */
+export type PauseSpeed = 'fast' | 'normal' | 'slow'
+
+export const PAUSE_SPEEDS: PauseSpeed[] = ['fast', 'normal', 'slow']
+
+/** Multiplier applied to every traffic-light phase duration. */
+export const PAUSE_SPEED_FACTOR: Record<PauseSpeed, number> = {
+  fast: 0.6,
+  normal: 1,
+  slow: 1.6,
+}
+
 /* ---------------- Overtime (near-tie at the buzzer) ---------------- */
 
 /** Bars closer than this (percent) when time runs out → overtime. */
@@ -130,6 +149,8 @@ export interface GameSettings {
   comboMode: boolean
   /** Movement sensitivity — scales the bar fill per movement (Low/Med/High). */
   sensitivity: Sensitivity
+  /** Traffic-light mode's light-cycle speed (Fast/Normal/Slow). Unused outside 'traffic'. */
+  pauseSpeed: PauseSpeed
   /** Flip the canvas horizontally (natural for players watching themselves on a TV). */
   mirrorMode: boolean
   /** Chosen camera deviceId; null = default front camera. */
@@ -151,6 +172,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   freezeMode: false,
   comboMode: true,
   sensitivity: 'medium',
+  pauseSpeed: 'normal',
   mirrorMode: true,
   cameraId: null,
   maskMode: false,

@@ -225,11 +225,11 @@ class PortraitComposer {
       ctx.fillStyle = '#ffffff'
       ctx.shadowColor = th.glow ? 'rgba(0, 195, 255, 0.8)' : 'rgba(0, 0, 0, 0.45)'
       ctx.shadowBlur = th.glow ? 24 : 12
-      ctx.fillText(th.glow ? 'SPEED BATTLE' : 'Speed Battle', PORTRAIT_W / 2, fg.y - 64)
+      ctx.fillText(th.glow ? 'HITBOX' : 'Hitbox', PORTRAIT_W / 2, fg.y - 64)
       ctx.shadowBlur = 0
       ctx.font = `${th.glow ? 700 : 600} 40px ${th.font}`
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)'
-      ctx.fillText('#SpeedBattleDuel', PORTRAIT_W / 2, fg.y + fg.h + 92)
+      ctx.fillText('#HitboxDuel', PORTRAIT_W / 2, fg.y + fg.h + 92)
       ctx.restore()
     }
   }
@@ -579,10 +579,10 @@ async function shareClipNative(clip: MatchClip): Promise<void> {
     import('@capacitor/filesystem'),
     import('@capacitor/share'),
   ])
-  const name = `speed-battle-${Date.now()}.${clip.ext}`
+  const name = `hitbox-${Date.now()}.${clip.ext}`
   const data = await blobToBase64(clip.blob)
   const { uri } = await Filesystem.writeFile({ path: name, data, directory: Directory.Cache })
-  await Share.share({ title: 'Speed Battle', text: '#SpeedBattleDuel', url: uri })
+  await Share.share({ title: 'Hitbox', text: '#HitboxDuel', url: uri })
 }
 
 /**
@@ -601,7 +601,7 @@ export async function shareClip(clip: MatchClip): Promise<void> {
     return
   }
 
-  const file = new File([clip.blob], `speed-battle.${clip.ext}`, { type: clip.blob.type })
+  const file = new File([clip.blob], `hitbox.${clip.ext}`, { type: clip.blob.type })
   const shareData: ShareData = { files: [file] }
   if (typeof navigator.canShare === 'function' && navigator.canShare(shareData)) {
     try {

@@ -34,6 +34,7 @@ import {
 } from '../src/recorder'
 import {
   COMBO_TIERS,
+  PAUSE_SPEED_FACTOR,
   comboMultiplier,
   isOvertimeTie,
   mirrorDefaultForLabel,
@@ -541,6 +542,33 @@ ok('traffic: deterministic light schedule, red burns movement', () => {
   assert.ok(flip.burn[0] > 0 && flip.fill[0] === 0, 'moving on red burns')
   const back = tick(TRAFFIC_GREEN_MIN_MS + TRAFFIC_RED_MIN_MS + 1)
   assert.equal(back.events.trafficSwitch, 'green')
+})
+
+ok('traffic: pause-speed factor scales both phase durations, and defaults to unscaled', () => {
+  // No factor argument at all — existing callers/tests must see identical
+  // timing to before this setting existed.
+  const unscaled = createModeState('traffic', () => 0)
+  assert.equal(unscaled.switchAtMs, TRAFFIC_GREEN_MIN_MS)
+
+  // Explicit factor 1 (PAUSE_SPEED_FACTOR.normal) must match the default.
+  const normal = createModeState('traffic', () => 0, PAUSE_SPEED_FACTOR.normal)
+  assert.equal(normal.switchAtMs, TRAFFIC_GREEN_MIN_MS)
+
+  // Slow (>1) stretches both the green and the following red window.
+  const slow = createModeState('traffic', () => 0, PAUSE_SPEED_FACTOR.slow)
+  assert.equal(slow.switchAtMs, TRAFFIC_GREEN_MIN_MS * PAUSE_SPEED_FACTOR.slow)
+  const slowTick = (elapsedMs: number) =>
+    modeTick(slow, { dt: 0.03, elapsedMs, speeds: [0.8, 0.8], rate: 6.5 }, () => 0)
+  const slowFlipAt = TRAFFIC_GREEN_MIN_MS * PAUSE_SPEED_FACTOR.slow + 1
+  const slowFlip = slowTick(slowFlipAt)
+  assert.equal(slowFlip.events.trafficSwitch, 'red')
+  assert.equal(slow.switchAtMs, slowFlipAt + TRAFFIC_RED_MIN_MS * PAUSE_SPEED_FACTOR.slow)
+
+  // Fast (<1) compresses both windows the same way.
+  const fast = createModeState('traffic', () => 0, PAUSE_SPEED_FACTOR.fast)
+  assert.equal(fast.switchAtMs, TRAFFIC_GREEN_MIN_MS * PAUSE_SPEED_FACTOR.fast)
+  assert.ok(fast.switchAtMs < unscaled.switchAtMs, 'fast switches sooner than normal')
+  assert.ok(slow.switchAtMs > unscaled.switchAtMs, 'slow switches later than normal')
 })
 
 ok('boss: attacks land on schedule and grow; charge maps 0→100', () => {

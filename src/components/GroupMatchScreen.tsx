@@ -13,6 +13,16 @@ type Phase = 'idle' | 'calibrate' | 'countdown' | 'play' | 'over'
 
 /** Free-for-all supports three or four bodies. */
 const PLAYER_COUNTS = [3, 4] as const
+
+/**
+ * `#group?count=3|4` skips the in-screen count picker — Home's unified
+ * "Speed Battle" tile already asked the host how many players, same
+ * `?param` in `#hash` convention `#runner?mode=` and `#online?j=` already use.
+ */
+function initialCountFromHash(): 3 | 4 | null {
+  const value = Number(window.location.hash.match(/[?&]count=(\d+)/)?.[1])
+  return value === 3 || value === 4 ? value : null
+}
 /** First bar to reach this (percent) wins. */
 const TARGET = 100
 /** Classic pace: movement fills the bar; group parties run at the "fight" rate. */
@@ -45,9 +55,10 @@ interface Result {
  */
 export function GroupMatchScreen() {
   const { t } = useI18n()
-  const [playerCount, setPlayerCount] = useState<number>(3)
-  const [chosen, setChosen] = useState(false)
-  const [showRules, setShowRules] = useState(false)
+  const [initialCount] = useState(initialCountFromHash)
+  const [playerCount, setPlayerCount] = useState<number>(initialCount ?? 3)
+  const [chosen, setChosen] = useState(initialCount !== null)
+  const [showRules, setShowRules] = useState(initialCount !== null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [mirror, setMirror] = useState(true)
   const [count, setCount] = useState(3)

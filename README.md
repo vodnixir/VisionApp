@@ -1,4 +1,4 @@
-# ⚡ Speed Battle AI
+# ⚡ Hitbox
 
 A web-based camera game for two players. The webcam tracks both fighters in real time with
 **MoveNet MultiPose Lightning**; fast, wide movements (jabs, dodges, footwork) fill each

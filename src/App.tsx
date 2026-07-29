@@ -1,9 +1,11 @@
+import { RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { music, type MusicTrack } from './audio/music'
 import { sfx } from './audio/sfx'
 import { createTournament, reportWinner, type Tournament } from './bracket'
 import { CalibrationOverlay } from './components/CalibrationOverlay'
 import { GameOverScreen } from './components/GameOverScreen'
+import { HitboxWelcomeScreen } from './components/HitboxWelcomeScreen'
 import { HomeScreen } from './components/HomeScreen'
 import { InstructionCard, type Rule } from './components/InstructionCard'
 import { MatchSetupScreen } from './components/MatchSetupScreen'
@@ -29,6 +31,8 @@ import {
 } from './storage'
 import {
   RHYTHM_PERIOD_MS,
+  TRAFFIC_RED_MIN_MS,
+  TRAFFIC_RED_VAR_MS,
   bossCharge,
   createModeState,
   modeTick,
@@ -42,6 +46,7 @@ import {
   FREEZE_WINDOW_MS,
   OVERTIME_DELTA,
   OVERTIME_MAX_MS,
+  PAUSE_SPEED_FACTOR,
   ROUND_DURATION_MS,
   SENSITIVITY_FACTOR,
   comboMultiplier,
@@ -143,6 +148,7 @@ interface Accumulators {
 function createAccumulators(
   handicap: [number, number] = [0, 0],
   mode: MatchMode = 'classic',
+  trafficFactor = 1,
 ): Accumulators {
   return {
     // The boss bar is shared — individual head starts don't apply.
@@ -158,7 +164,7 @@ function createAccumulators(
     comboDipMs: [0, 0],
     comboMult: [1, 1],
     maxCombo: [1, 1],
-    modeState: createModeState(mode),
+    modeState: createModeState(mode, Math.random, trafficFactor),
     overtime: false,
     otBase: [0, 0],
     otStartedAt: 0,
@@ -188,6 +194,8 @@ export default function App() {
   const [game, dispatch] = useGameState()
   const gameRef = useRef(game)
   gameRef.current = game
+  /** The very first thing shown on a cold load — see HitboxWelcomeScreen. */
+  const [showWelcome, setShowWelcome] = useState(true)
 
   const NO_HINTS: EngineHints = { tooFar: false, overlap: false, dark: false }
   const [presentCount, setPresentCount] = useState(0)
@@ -518,7 +526,11 @@ export default function App() {
 
   const startMatch = useCallback(() => {
     const settings = gameRef.current.settings
-    accumRef.current = createAccumulators(settings.handicap, settings.matchMode)
+    accumRef.current = createAccumulators(
+      settings.handicap,
+      settings.matchMode,
+      PAUSE_SPEED_FACTOR[settings.pauseSpeed],
+    )
     // The freeze modifier belongs to classic; other modes bring their own rules.
     if (settings.freezeMode && settings.matchMode === 'classic') {
       accumRef.current.freezes = generateFreezes()
@@ -700,11 +712,43 @@ export default function App() {
     setShowBattleRules(true)
   }
 
+  /**
+   * Traffic-light mode only, live during PLAYING: the host can force a fresh
+   * red window right now — re-triggering it if the light is currently green,
+   * or extending it (resetting the countdown to a full window) if it's
+   * already red. Setting switchAtMs to a point in the future means the next
+   * modeTick() sees elapsedMs < switchAtMs and does nothing further, so this
+   * never double-fires the automatic trafficSwitch event — sfx plays here
+   * instead, same whistle the automatic switch would have played.
+   */
+  const handleRepeatPause = () => {
+    const g = gameRef.current
+    if (g.phase !== 'PLAYING' || g.settings.matchMode !== 'traffic') return
+    const a = accumRef.current
+    const now = performance.now()
+    const elapsed = now - (g.matchStartedAt ?? now)
+    const factor = PAUSE_SPEED_FACTOR[g.settings.pauseSpeed]
+    a.modeState.red = true
+    a.modeState.switchAtMs = elapsed + (TRAFFIC_RED_MIN_MS + Math.random() * TRAFFIC_RED_VAR_MS) * factor
+    sfx.whistle()
+  }
+
   const handleRematch = () => {
     recorderRef.current.cancel()
     resetClip()
     resetRoundState()
     dispatch({ type: 'REMATCH' })
+  }
+
+  /* ---------------- Home block navigation ---------------- */
+
+  /** A duel-family Home tile (Speed's Quick Match, Dancing, Keep Moving,
+   *  Red Light Green Light, Copy the Pose, Boss Fight): pre-select the mode,
+   *  then land on the normal Match Setup flow — sensitivity picker and all,
+   *  completely unchanged. */
+  const handlePlayMode = (mode: MatchMode) => {
+    dispatch({ type: 'UPDATE_SETTINGS', patch: { matchMode: mode } })
+    dispatch({ type: 'NAVIGATE', to: 'MATCH_SETUP' })
   }
 
   /* ---------------- Tournament actions ---------------- */
@@ -750,10 +794,26 @@ export default function App() {
     dispatch({ type: 'NAVIGATE', to: 'TOURNAMENT' })
   }
 
+  /** Speed's "Tournament" tile: brackets don't offer a mode picker of their
+   *  own, so pin the mode to classic (the block's theme) before entering —
+   *  otherwise it would silently inherit whatever mode a previous quick
+   *  match left behind. */
+  const handleTournamentEntry = () => {
+    dispatch({ type: 'UPDATE_SETTINGS', patch: { matchMode: 'classic' } })
+    dispatch({ type: 'NAVIGATE', to: 'TOURNAMENT' })
+  }
+
   /* ---------------- Render ---------------- */
 
   const inArena = ARENA_PHASES.includes(game.phase)
   const settings = game.settings
+
+  // The welcome splash is the whole screen — nothing else needs to mount
+  // (camera engine effects above are all keyed off `game.phase`, which stays
+  // HOME the entire time this is showing, so nothing runs early).
+  if (showWelcome) {
+    return <HitboxWelcomeScreen onGetStarted={() => setShowWelcome(false)} />
+  }
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
@@ -763,8 +823,8 @@ export default function App() {
 
       {game.phase === 'HOME' && (
         <HomeScreen
-          onQuickMatch={() => dispatch({ type: 'NAVIGATE', to: 'MATCH_SETUP' })}
-          onTournament={() => dispatch({ type: 'NAVIGATE', to: 'TOURNAMENT' })}
+          onPlayMode={handlePlayMode}
+          onTournament={handleTournamentEntry}
           onRoster={() => dispatch({ type: 'NAVIGATE', to: 'ROSTER' })}
           tournamentActive={tournament !== null}
           castSupported={show.supported()}
@@ -824,6 +884,19 @@ export default function App() {
           countdown={game.countdown}
           hints={hints}
         />
+      )}
+
+      {/* Traffic-light mode only: lets the host force a fresh red window
+          mid-round instead of waiting for the automatic cycle. */}
+      {game.phase === 'PLAYING' && settings.matchMode === 'traffic' && (
+        <button
+          type="button"
+          onClick={handleRepeatPause}
+          className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-black/70"
+        >
+          <RotateCw className="size-4" aria-hidden />
+          {t('setup.repeatPause')}
+        </button>
       )}
 
       {game.phase === 'GAME_OVER' && game.results && showResults && (

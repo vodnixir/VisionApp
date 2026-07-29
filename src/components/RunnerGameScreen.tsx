@@ -31,6 +31,16 @@ type Phase = 'idle' | 'calibrate' | 'countdown' | 'play' | 'over'
 /** Fixed identity colours for the runner avatars (P1 cyan, P2 magenta, P3 lime). */
 const RUNNER_COLORS = ['#00c3ff', '#ff2e63', '#a3e635']
 
+/**
+ * `#runner?mode=solo|duel|squad` skips the in-screen mode picker — the Home
+ * blocks link straight to a specific variant, the same `?param` in `#hash`
+ * convention `#online?j=<code>` already uses for its invite links.
+ */
+function initialModeFromHash(): RunnerMode | null {
+  const value = window.location.hash.match(/[?&]mode=([a-z]+)/)?.[1]
+  return RUNNER_MODES.some((m) => m.id === value) ? (value as RunnerMode) : null
+}
+
 interface PlayerResult {
   index: number
   score: number
@@ -58,8 +68,11 @@ interface Result {
  */
 export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
   const { t, lang } = useI18n()
-  const [mode, setMode] = useState<RunnerMode | null>(demo ? 'solo' : null)
-  const [showRules, setShowRules] = useState(false)
+  const [initialMode] = useState(() => (demo ? 'solo' : initialModeFromHash()))
+  const [mode, setMode] = useState<RunnerMode | null>(initialMode)
+  // A mode pre-selected from the URL skips the picker straight to the rules
+  // card, same as tapping a mode tile there does (handlePickMode below).
+  const [showRules, setShowRules] = useState(!demo && initialMode !== null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [count, setCount] = useState(3)
   const [mirror, setMirror] = useState(true)

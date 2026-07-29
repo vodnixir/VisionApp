@@ -31,14 +31,14 @@ export function GameOverScreen({
   const winnerColor = playerColorsUI()[results.winnerIndex]
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-scrim px-4 backdrop-blur-sm">
-      <div className="animate-winner-flash flex flex-col items-center gap-1">
-        <Trophy className="size-12 text-gold sm:size-16" aria-hidden />
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-scrim px-4 py-4 backdrop-blur-sm landscape:justify-start landscape:gap-2">
+      <div className="animate-winner-flash flex flex-col items-center gap-1 landscape:gap-0.5">
+        <Trophy className="size-12 text-gold sm:size-16 landscape:size-8" aria-hidden />
         <p className="text-xs font-medium tracking-wider text-t2">
           {t('over.winner').toUpperCase()}
         </p>
         <h2
-          className="max-w-full truncate px-2 text-4xl font-bold sm:text-6xl"
+          className="max-w-full truncate px-2 text-4xl font-bold sm:text-6xl landscape:text-3xl"
           style={{ color: winnerColor }}
         >
           {results.winnerName}
@@ -48,17 +48,17 @@ export function GameOverScreen({
         )}
       </div>
 
-      <div className="grid w-full max-w-xl grid-cols-2 gap-3">
+      <div className="grid w-full max-w-xl grid-cols-2 gap-3 landscape:max-w-2xl landscape:gap-2">
         {results.players.map((p, i) => (
           <div
             key={i}
-            className={`rounded-2xl border bg-card p-3 sm:p-4 ${
+            className={`rounded-2xl border bg-card p-3 sm:p-4 landscape:p-2 ${
               i === results.winnerIndex ? '' : 'opacity-70'
             }`}
             style={{ borderColor: `${playerColorsUI()[i]}4d` }}
           >
             <p
-              className="mb-1.5 truncate text-sm font-semibold sm:text-lg"
+              className="mb-1.5 truncate text-sm font-semibold sm:text-lg landscape:mb-0.5 landscape:text-xs"
               style={{ color: playerColorsUI()[i] }}
             >
               {p.name}
@@ -91,7 +91,7 @@ export function GameOverScreen({
 
       <ClipShare state={clip} />
 
-      <div className="flex w-full max-w-xl flex-col gap-2.5">
+      <div className="flex w-full max-w-xl flex-col gap-2.5 pb-2 landscape:max-w-2xl landscape:gap-1.5">
         {onContinueTournament ? (
           <button
             type="button"
@@ -147,7 +147,7 @@ export function GameOverScreen({
 
 function StatRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between border-t border-edge/60 py-1.5">
+    <div className="flex items-center justify-between border-t border-edge/60 py-1.5 landscape:py-1">
       <span className="flex items-center gap-1.5 text-[10px] text-t3 sm:text-xs">
         {icon}
         {label.toUpperCase()}
