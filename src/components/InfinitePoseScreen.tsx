@@ -88,6 +88,11 @@ export function InfinitePoseScreen() {
   useEffect(() => {
     configure({
       mirror,
+      // Exactly 1 tracked body — without this the engine defaults maxPlayers
+      // to 2 (its duel-shaped default), which also disables the ROI zoom-in
+      // crop entirely (it only activates once EVERY expected slot is filled,
+      // and a lone solo player can never fill a phantom second slot).
+      maxPlayers: 1,
       scoring: false,
       drawOverlays: true,
       rolesLocked: false,
@@ -142,41 +147,55 @@ export function InfinitePoseScreen() {
   }
 
   onFrameRef.current = (frame: EngineFrame) => {
-    if (phase === 'calibrate') {
-      setPresentCount(frame.presentCount)
-      if (frame.presentCount >= 1) {
-        if (lockStartRef.current === null) {
-          lockStartRef.current = frame.now
-          sfx.lock()
-        } else if (frame.now - lockStartRef.current >= LOCK_DURATION_MS) {
-          setPhase('countdown')
+    // The engine's inference loop calls this directly from an async while
+    // loop with no surrounding try/catch of its own — an uncaught throw in
+    // here would silently kill inference for good (no more frames, no error
+    // shown anywhere, indistinguishable from "stuck"). Catching and logging
+    // here turns that failure mode into a visible one instead.
+    try {
+      if (phase === 'calibrate') {
+        setPresentCount(frame.presentCount)
+        if (frame.presentCount >= 1) {
+          if (lockStartRef.current === null) {
+            lockStartRef.current = frame.now
+            sfx.lock()
+            console.log('[Calibration] Player detected — locking...')
+          } else if (frame.now - lockStartRef.current >= LOCK_DURATION_MS) {
+            console.log('[Calibration] Solo Pose calibrated successfully, transitioning to game loop.')
+            setPhase('countdown')
+          }
+        } else {
+          if (lockStartRef.current !== null) {
+            console.log('[Calibration] Player lost frame — lock reset.')
+          }
+          lockStartRef.current = null
         }
-      } else {
-        lockStartRef.current = null
-      }
-      return
-    }
-
-    if (phase === 'play') {
-      const pose = frame.players[0]?.arms ?? null
-      const target = POSE_LIBRARY[poseIndexRef.current]
-      const match = poseSimilarity(pose, target)
-      drawOverlay(match)
-
-      const threshold = matchThreshold(levelRef.current)
-      if (match >= threshold) {
-        // Landed it — level up, next pose is faster and stricter.
-        levelRef.current += 1
-        setLevel(levelRef.current)
-        sfx.tick()
-        poseIndexRef.current = nextPoseIndex(poseIndexRef.current, Math.random)
-        windowStartRef.current = frame.now
         return
       }
-      const window = poseIntervalMs(levelRef.current)
-      if (frame.now - windowStartRef.current >= window) {
-        finish()
+
+      if (phase === 'play') {
+        const pose = frame.players[0]?.arms ?? null
+        const target = POSE_LIBRARY[poseIndexRef.current]
+        const match = poseSimilarity(pose, target)
+        drawOverlay(match)
+
+        const threshold = matchThreshold(levelRef.current)
+        if (match >= threshold) {
+          // Landed it — level up, next pose is faster and stricter.
+          levelRef.current += 1
+          setLevel(levelRef.current)
+          sfx.tick()
+          poseIndexRef.current = nextPoseIndex(poseIndexRef.current, Math.random)
+          windowStartRef.current = frame.now
+          return
+        }
+        const window = poseIntervalMs(levelRef.current)
+        if (frame.now - windowStartRef.current >= window) {
+          finish()
+        }
       }
+    } catch (err) {
+      console.error('[Calibration] Unexpected error in the pose frame handler:', err)
     }
   }
 
@@ -186,6 +205,7 @@ export function InfinitePoseScreen() {
     poseIndexRef.current = nextPoseIndex(-1, Math.random)
     windowStartRef.current = performance.now()
     setIsNewBest(false)
+    console.log('[Calibration] Countdown complete — entering the pose game loop.')
     setPhase('play')
   }
 
