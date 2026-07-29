@@ -46,10 +46,20 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
   const [error, setError] = useState<string | null>(null)
 
   const start = useCallback(async (cameraId?: string | null) => {
-    if (engineRef.current) return
+    console.log('[Camera] Mounting stream, cameraId:', cameraId ?? '(default)')
+    if (engineRef.current) {
+      console.warn('[Camera] start() called while an engine is already active — ignoring.')
+      return
+    }
     const video = videoRef.current
     const canvas = canvasRef.current
-    if (!video || !canvas) return
+    if (!video || !canvas) {
+      console.error('[Camera] Initialization failed: video/canvas ref not mounted yet', {
+        video: !!video,
+        canvas: !!canvas,
+      })
+      return
+    }
 
     setStatus('starting')
     setError(null)
@@ -57,7 +67,8 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     let EngineClass: typeof PoseEngine
     try {
       EngineClass = (await import('../cv/engine')).PoseEngine
-    } catch {
+    } catch (err) {
+      console.error('[Camera] Initialization failed: could not load the vision engine module', err)
       setStatus('error')
       setError('Could not load the vision engine. Check the connection and retry.')
       return
@@ -81,9 +92,14 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     engineRef.current = engine
     try {
       await engine.start(cameraId)
-      if (engineRef.current !== engine) return // destroyed while booting
+      if (engineRef.current !== engine) {
+        console.warn('[Camera] Engine destroyed while booting — discarding this start() result.')
+        return
+      }
+      console.log('[Camera] Stream active. Video resolution:', video.videoWidth, 'x', video.videoHeight)
       setStatus('running')
     } catch (err) {
+      console.error('[Camera] Initialization failed:', err)
       engine.destroy()
       if (engineRef.current === engine) engineRef.current = null
       setStatus('error')
@@ -92,6 +108,7 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
   }, [])
 
   const stop = useCallback(() => {
+    if (engineRef.current) console.log('[Camera] Stopping stream and tearing down engine.')
     engineRef.current?.destroy()
     engineRef.current = null
     setStatus('idle')

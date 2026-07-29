@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 /**
  * Best-effort screen wake lock so the phone doesn't dim mid-game.
@@ -62,5 +62,14 @@ export function useWakeLock() {
   // Release on unmount.
   useEffect(() => release, [release])
 
-  return { acquire, release }
+  // Stable object identity across renders — acquire/release are themselves
+  // already useCallback-stable, but the WRAPPING object literal was being
+  // rebuilt fresh every render. Callers that put the whole `wakeLock` object
+  // in a useEffect dependency array (GroupMatchScreen, InfinitePoseScreen)
+  // had that effect's cleanup fire on every re-render instead of only on
+  // unmount — which silently tore down the camera engine mid-boot on the
+  // very next render after start() kicked off (setStatus('starting') alone
+  // was enough to trigger it). This was the root cause of camera hardware
+  // never activating for those two screens.
+  return useMemo(() => ({ acquire, release }), [acquire, release])
 }
