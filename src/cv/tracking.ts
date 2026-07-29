@@ -571,6 +571,20 @@ export function armPose(pose: Pose): ArmPose | null {
   return { left, right }
 }
 
+/**
+ * Raw per-side confidence for pose-scoring's stricter gate — the minimum score
+ * among shoulder/elbow/wrist, independent of the 0.3 KEYPOINT_MIN_SCORE gate
+ * armPose() already applies (a Limb existing only proves it cleared 0.3; the
+ * pose-scoring modes need to know if it clears their own, stricter bar). 0 for
+ * a keypoint that isn't in the pose at all.
+ */
+export function armConfidence(pose: Pose): { left: number; right: number } {
+  const score = (name: string): number => pose.keypoints.find((k) => k.name === name)?.score ?? 0
+  const sideMin = (side: 'left' | 'right'): number =>
+    Math.min(score(`${side}_shoulder`), score(`${side}_elbow`), score(`${side}_wrist`))
+  return { left: sideMin('left'), right: sideMin('right') }
+}
+
 export function extractMotionKeypoints(pose: Pose): KpMap {
   const map: KpMap = new Map()
   for (const k of pose.keypoints) {
@@ -680,6 +694,8 @@ export class PlayerTracker implements SlotAnchor {
   posture: RawPosture | null = null
   /** Both arms' segment directions for the pose-copy mode (null when no arm visible). */
   arms: ArmPose | null = null
+  /** Per-side raw confidence backing arms — the pose-scoring modes' stricter gate. */
+  armsConfidence: { left: number; right: number } = { left: 0, right: 0 }
   /** Running clothing-colour signature — the identity matcher's tie-breaker. */
   sig: ColorSig | null = null
   /** Latest frame's motion keypoints (full-frame px) — read by the hitmarker FX. */
@@ -735,6 +751,7 @@ export class PlayerTracker implements SlotAnchor {
     this.posture = bodyPosture(candidate.pose)
     // Arm directions for the pose-copy mode (same lifetime as the posture).
     this.arms = armPose(candidate.pose)
+    this.armsConfidence = armConfidence(candidate.pose)
     // Clothing-colour signature (engine-sampled): smooth it so a single noisy
     // frame can't flip identity, and seed it on the first profiled frame.
     if (candidate.sig) this.sig = blendSig(this.sig, candidate.sig, alphaFromTau(safeDt, SIG_TAU_S))
@@ -794,6 +811,7 @@ export class PlayerTracker implements SlotAnchor {
     this.face = null
     this.posture = null
     this.arms = null
+    this.armsConfidence = { left: 0, right: 0 }
     this.speed = 0
     this.framesSinceSeen = Infinity
   }

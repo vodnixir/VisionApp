@@ -9,6 +9,7 @@ import { HitboxWelcomeScreen } from './components/HitboxWelcomeScreen'
 import { HomeScreen } from './components/HomeScreen'
 import { InstructionCard, type Rule } from './components/InstructionCard'
 import { MatchSetupScreen } from './components/MatchSetupScreen'
+import { PoseStickFigure } from './components/PoseStickFigure'
 import { RosterScreen } from './components/RosterScreen'
 import { ErrorOverlay, LoadingOverlay } from './components/StatusOverlay'
 import { TournamentScreen } from './components/TournamentScreen'
@@ -31,6 +32,7 @@ import {
 } from './storage'
 import {
   RHYTHM_PERIOD_MS,
+  SENSITIVITY_POSE_DIFFICULTY,
   TRAFFIC_RED_MIN_MS,
   TRAFFIC_RED_VAR_MS,
   bossCharge,
@@ -350,6 +352,11 @@ export default function App() {
         speeds,
         rate,
         poses: mode === 'pose' ? [frame.players[0].arms, frame.players[1].arms] : undefined,
+        poseConfidence:
+          mode === 'pose'
+            ? [frame.players[0].armsConfidence, frame.players[1].armsConfidence]
+            : undefined,
+        poseDifficulty: mode === 'pose' ? SENSITIVITY_POSE_DIFFICULTY[g.settings.sensitivity] : undefined,
       })
       if (tick.events.beat) sfx.tick()
       if (tick.events.poseChange) sfx.release()
@@ -864,6 +871,11 @@ export default function App() {
         <InstructionCard
           title={t(`gmode.${settings.matchMode}` as I18nKey)}
           subtitle={t(`gmode.${settings.matchMode}Hint` as I18nKey)}
+          preview={
+            settings.matchMode === 'pose' ? (
+              <PoseStickFigure left={{ upper: 90, fore: 90 }} right={{ upper: 90, fore: 90 }} />
+            ) : undefined
+          }
           rules={battleRules(t, settings.matchMode)}
           onStart={() => {
             setShowBattleRules(false)

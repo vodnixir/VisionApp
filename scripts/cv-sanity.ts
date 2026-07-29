@@ -9,19 +9,23 @@ import {
   BOSS_ATTACK_DAMAGE_START,
   BOSS_ATTACK_EVERY_MS,
   ENDURANCE_GRACE_MS,
-  POSE_LIBRARY,
+  POSE_DEFINITIONS,
+  POSE_IDS,
   POSE_PERIOD_MS,
+  POSE_SCORE_MIN_SCORE,
   RHYTHM_PERIOD_MS,
   RHYTHM_WINDOW_MS,
   TRAFFIC_GREEN_MIN_MS,
   TRAFFIC_RED_MIN_MS,
-  angleDelta,
+  absoluteRad,
   bossCharge,
   createModeState,
   modeTick,
   poseSimilarity,
+  poseTargetFor,
+  specDeg,
 } from '../src/modes'
-import type { ArmPose } from '../src/cv/tracking'
+import type { ArmPose, Limb } from '../src/cv/tracking'
 import {
   HIGHLIGHT_TARGET_MS,
   PORTRAIT_H,
@@ -587,49 +591,124 @@ ok('boss: attacks land on schedule and grow; charge maps 0→100', () => {
   assert.ok(fill.fill[0] > 0 && fill.fill[1] === 0)
 })
 
-ok('angleDelta is the shortest circular gap, symmetric and wrap-around', () => {
-  const TAU = Math.PI * 2
-  assert.ok(Math.abs(angleDelta(0, TAU)) < 1e-9, 'a full turn is zero apart')
-  assert.ok(Math.abs(angleDelta(-Math.PI / 2, (3 * Math.PI) / 2)) < 1e-9, 'wraps the long way')
-  assert.ok(Math.abs(angleDelta(0, Math.PI) - Math.PI) < 1e-9, 'opposite = π')
-  assert.ok(Math.abs(angleDelta(1, 2) - angleDelta(2, 1)) < 1e-9, 'symmetric')
-})
-
-ok('poseSimilarity: exact copy scores 1, an opposite pose scores 0', () => {
-  const target = POSE_LIBRARY[0] // tpose: arms out to the sides
-  const exact: ArmPose = { left: { ...target.arms[0] }, right: { ...target.arms[1] } }
-  assert.ok(poseSimilarity(exact, target) > 0.99, 'a dead-on copy maxes out')
-  // Arms straight down (90°) are ~90° off every horizontal target segment → 0.
-  const down: ArmPose = {
-    left: { upper: Math.PI / 2, fore: Math.PI / 2 },
-    right: { upper: Math.PI / 2, fore: Math.PI / 2 },
+ok('absoluteRad/specDeg: midline-relative degrees convert correctly at the 0/90/180 reference points', () => {
+  // deg 0 -> straight down for both sides (y-down image space: angle = +π/2).
+  assert.ok(Math.abs(absoluteRad(0, 1) - Math.PI / 2) < 1e-9, 'left, deg 0, straight down')
+  assert.ok(Math.abs(absoluteRad(0, -1) - Math.PI / 2) < 1e-9, 'right, deg 0, straight down')
+  // deg 90 -> +x for left (angle 0), -x for right (angle ±π).
+  assert.ok(Math.abs(absoluteRad(90, 1)) < 1e-9, 'left, deg 90, +x')
+  assert.ok(Math.abs(Math.abs(absoluteRad(90, -1)) - Math.PI) < 1e-9, 'right, deg 90, -x')
+  // deg 180 -> straight up for both sides (angle -π/2).
+  assert.ok(Math.abs(absoluteRad(180, 1) + Math.PI / 2) < 1e-9, 'left, deg 180, straight up')
+  assert.ok(Math.abs(absoluteRad(180, -1) + Math.PI / 2) < 1e-9, 'right, deg 180, straight up')
+  // specDeg is the true inverse of absoluteRad across both sides, away from the ±180° seam.
+  for (const side of [1, -1] as const) {
+    for (const deg of [0, 45, 90, 135, 179, -60]) {
+      const roundTrip = specDeg(absoluteRad(deg, side), side)
+      assert.ok(Math.abs(roundTrip - deg) < 1e-6, `round-trip ${deg}° side ${side} -> ${roundTrip}`)
+    }
   }
-  assert.equal(poseSimilarity(down, target), 0, 'a wrong pose earns nothing')
-  assert.equal(poseSimilarity(null, target), 0, 'no tracking → 0')
 })
 
-ok('poseSimilarity matches by best arm pairing (mirror-invariant)', () => {
-  const target = POSE_LIBRARY[2] // yShape: one arm up-left, one up-right
-  // Feed the arms swapped between sides — best pairing must still score 1.
-  const swapped: ArmPose = { left: { ...target.arms[1] }, right: { ...target.arms[0] } }
-  assert.ok(poseSimilarity(swapped, target) > 0.99, 'which side is which never matters')
+ok('poseSimilarity: exact copy scores ~1, a wrong pose scores 0, confidence gates scoring', () => {
+  const confident = { left: 1, right: 1 }
+  const target = poseTargetFor('t_pose') // arms out to the sides
+  const exact: ArmPose = { left: { ...target.arms[0] }, right: { ...target.arms[1] } }
+  assert.ok(poseSimilarity(exact, confident, 't_pose', 32) > 0.99, 'a dead-on copy maxes out')
+
+  const down = poseTargetFor('arms_down')
+  const wrong: ArmPose = { left: { ...down.arms[0] }, right: { ...down.arms[1] } }
+  assert.equal(poseSimilarity(wrong, confident, 't_pose', 32), 0, 'a wrong pose earns nothing')
+  assert.equal(poseSimilarity(null, confident, 't_pose', 32), 0, 'no tracking → 0')
+
+  // POSE_SCORE_MIN_SCORE is a stricter, separate gate from the 0.3 existence gate baked into `exact`/`wrong`.
+  assert.equal(poseSimilarity(exact, null, 't_pose', 32), 0, 'no confidence data → 0 even for a perfect angle match')
+  const lowConfidence = { left: POSE_SCORE_MIN_SCORE - 0.1, right: POSE_SCORE_MIN_SCORE - 0.1 }
+  assert.equal(poseSimilarity(exact, lowConfidence, 't_pose', 32), 0, 'confidence below the pose-scoring gate → 0')
+})
+
+ok('poseSimilarity: Tier 2 poses match either arm (side-agnostic by design)', () => {
+  const confident = { left: 1, right: 1 }
+  const target = poseTargetFor('one_arm_up') // authored: left arm up, right arm down
+  // A performer who raises their RIGHT arm instead should score just as well —
+  // poseSimilarity tries both pairings and keeps the better one. Swapping which
+  // spec values go on which side needs re-converting through absoluteRad (side-
+  // dependent), not just swapping the two absolute Limb values between slots.
+  const limbAt = (upper: number, fore: number, side: 1 | -1): Limb => ({
+    upper: absoluteRad(upper, side),
+    fore: absoluteRad(fore, side),
+  })
+  const mirrored: ArmPose = { left: limbAt(0, 0, 1), right: limbAt(170, 170, -1) }
+  assert.ok(poseSimilarity(mirrored, confident, 'one_arm_up', 32) > 0.99, 'raising the other arm still counts')
   // A single visible arm that matches one target arm still gets full single credit.
   const oneArm: ArmPose = { left: { ...target.arms[0] }, right: null }
-  assert.ok(poseSimilarity(oneArm, target) > 0.99, 'an occluded arm never zeroes an honest try')
+  assert.ok(poseSimilarity(oneArm, confident, 'one_arm_up', 32) > 0.99, 'an occluded arm never zeroes an honest try')
 })
 
-ok('pose mode: only a good copy fills, and the target rotates on schedule', () => {
-  const s = createModeState('pose', () => 0) // deterministic: starts on pose 0
-  const good = POSE_LIBRARY[0]
+ok('pose library: every pair is separated by >=35° on some spec angle under the matcher\'s pairing, except the one documented exception', () => {
+  const specDelta = (a: number, b: number): number => {
+    const d = Math.abs(a - b) % 360
+    return d > 180 ? 360 - d : d
+  }
+  // The smaller of the two pairings poseSimilarity could pick — if THIS is still
+  // >=35° apart, no pairing can confuse the two poses.
+  const pairSpread = (aId: (typeof POSE_IDS)[number], bId: (typeof POSE_IDS)[number]): number => {
+    const a = POSE_DEFINITIONS[aId]
+    const b = POSE_DEFINITIONS[bId]
+    const straight = Math.max(
+      specDelta(a.left.upper, b.left.upper),
+      specDelta(a.left.fore, b.left.fore),
+      specDelta(a.right.upper, b.right.upper),
+      specDelta(a.right.fore, b.right.fore),
+    )
+    const swapped = Math.max(
+      specDelta(a.left.upper, b.right.upper),
+      specDelta(a.left.fore, b.right.fore),
+      specDelta(a.right.upper, b.left.upper),
+      specDelta(a.right.fore, b.left.fore),
+    )
+    return Math.min(straight, swapped)
+  }
+
+  for (let i = 0; i < POSE_IDS.length; i++) {
+    for (let j = i + 1; j < POSE_IDS.length; j++) {
+      const a = POSE_IDS[i]
+      const b = POSE_IDS[j]
+      const spread = pairSpread(a, b)
+      const isKnownException = (a === 'goalpost' && b === 'hands_on_head') || (a === 'hands_on_head' && b === 'goalpost')
+      if (isKnownException) {
+        assert.ok(spread < 35, 'goalpost vs hands_on_head is expected to be close on angles alone — rescued by wristsTogether')
+      } else {
+        assert.ok(spread >= 35, `${a} vs ${b} are only ${spread.toFixed(1)}° apart under any pairing — not separated`)
+      }
+    }
+  }
+})
+
+ok('pose mode: only a good, confident copy fills, and the target rotates on schedule', () => {
+  const s = createModeState('pose', () => 0) // deterministic: starts on POSE_IDS[0] = arms_down
+  const target = poseTargetFor(POSE_IDS[0])
   const goodArms: [ArmPose, ArmPose] = [
-    { left: { ...good.arms[0] }, right: { ...good.arms[1] } },
-    { left: { upper: Math.PI / 2, fore: Math.PI / 2 }, right: { upper: Math.PI / 2, fore: Math.PI / 2 } },
+    { left: { ...target.arms[0] }, right: { ...target.arms[1] } },
+    { left: { upper: 0, fore: 0 }, right: { upper: 0, fore: 0 } }, // angle-identical, but see below: no confidence
   ]
-  const early = modeTick(s, { dt: 0.1, elapsedMs: 100, speeds: [0, 0], rate: 6.5, poses: goodArms })
+  const poseConfidence: [{ left: number; right: number }, { left: number; right: number }] = [
+    { left: 1, right: 1 },
+    { left: 0, right: 0 },
+  ]
+  const early = modeTick(s, {
+    dt: 0.1,
+    elapsedMs: 100,
+    speeds: [0, 0],
+    rate: 6.5,
+    poses: goodArms,
+    poseConfidence,
+  })
   assert.equal(early.pose?.index, 0, 'shows the first pose')
-  assert.ok(early.fill[0] > 0, 'the matching player fills')
-  assert.equal(early.fill[1], 0, 'the mismatched player earns nothing')
-  assert.ok((early.pose?.match[0] ?? 0) > 0.99 && (early.pose?.match[1] ?? 1) < 0.1)
+  assert.ok(early.fill[0] > 0, 'the confident, matching player fills')
+  assert.equal(early.fill[1], 0, 'no confidence data — earns nothing despite matching angles')
+  assert.ok((early.pose?.match[0] ?? 0) > 0.99, 'player 1 is a dead-on copy')
+  assert.equal(early.pose?.match[1] ?? -1, 0, 'player 2 has no confidence data — scored 0, not a false match')
   // Past the period the target flips to a different pose with a change event.
   const flip = modeTick(s, {
     dt: 0.1,
@@ -637,6 +716,7 @@ ok('pose mode: only a good copy fills, and the target rotates on schedule', () =
     speeds: [0, 0],
     rate: 6.5,
     poses: goodArms,
+    poseConfidence,
   })
   assert.ok(flip.events.poseChange, 'a new pose is announced')
   assert.notEqual(flip.pose?.index, 0, 'and it is a different pose')

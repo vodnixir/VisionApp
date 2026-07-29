@@ -4,7 +4,7 @@
  * fill and burn does each player get this frame, and what just happened".
  * Everything is deterministic given the injected rng — covered by sanity tests.
  */
-import type { MatchMode } from './types'
+import type { MatchMode, Sensitivity } from './types'
 import type { ArmPose, Limb } from './cv/tracking'
 
 /* ---------------- Rhythm ---------------- */
@@ -49,90 +49,322 @@ export const TRAFFIC_GREEN_BOOST = 1.25
 /** Moving on red burns harder than green earns. */
 export const TRAFFIC_RED_BURN = 1.5
 
-/* ---------------- Pose copy (repeat-the-pose duel) ---------------- */
+/* ---------------- Pose copy (repeat-the-pose duel + Infinite Pose) ---------------- */
 
-/** How long each target pose stays on screen before the next one appears. */
+/** How long each target pose stays on screen before the next one appears (2P duel's fixed cadence — Infinite Pose escalates its own window instead). */
 export const POSE_PERIOD_MS = 5000
-/**
- * Per-segment angular tolerance (radians): an arm segment this far off the
- * target scores 0, dead-on scores 1, linear in between. ~63° — generous enough
- * for living-room tracking and little arms, tight enough that a real copy wins.
- */
-export const POSE_ANGLE_TOL = 1.1
-/** Below this pose similarity a player earns nothing — you must actually hit it. */
-export const POSE_MATCH_MIN = 0.55
 /** A clean hold out-earns a strong classic mover, offsetting the switch downtime. */
 export const POSE_FILL_BOOST = 1.35
+/**
+ * Stricter, player-facing confidence gate for pose SCORING — distinct from
+ * the pipeline-wide KEYPOINT_MIN_SCORE=0.3 existence gate armPose() already
+ * applies (a Limb existing only proves it cleared 0.3). 0.5, not 0.6: MoveNet
+ * Lightning wrists routinely sit in the 0.4-0.6 band under motion or poor
+ * light, and 0.6 spams the "show your arms" hint instead of actually scoring
+ * a genuine attempt.
+ */
+export const POSE_SCORE_MIN_SCORE = 0.5
 
-/** A target pose = the two arms' segment directions (radians, atan2 in +x/+y). */
+/** A target pose = the two arms' segment directions (radians, atan2 in +x/+y). Unchanged shape — cv/draw.ts's drawPoseTarget consumes this directly, untouched. */
 export interface PoseTarget {
-  id: string
+  id: PoseId
   arms: [Limb, Limb]
 }
 
 const D = Math.PI / 180
-const limb = (upperDeg: number, foreDeg: number): Limb => ({
-  upper: upperDeg * D,
-  fore: foreDeg * D,
-})
 
 /**
- * The pose deck. Angles are display-intuitive: 0° points right, 90° down, 180°
- * left, -90° up. Every pose is left/right symmetric, so mirrored TV footage and
- * either-handed kids score identically (the scorer matches arms by best pairing,
- * never by which side they're on).
+ * Midline-relative authoring/scoring angle, degrees: 0 = straight down along
+ * the body, 90 = outward horizontal (away from the midline), 180 = straight
+ * up, negative = inward (crosses the midline). Left/right are symmetric by
+ * construction — an author never has to think about which raw image-space
+ * direction "outward" points for a given side. This is a PROJECTION used only
+ * for authoring PoseDefinitions and scoring a live ArmPose against them —
+ * Limb (absolute atan2 image-plane direction) stays exactly as it was, since
+ * cv/draw.ts's renderer depends on that exact shape.
  */
-export const POSE_LIBRARY: PoseTarget[] = [
-  // T-pose: both arms straight out to the sides.
-  { id: 'tpose', arms: [limb(180, 180), limb(0, 0)] },
-  // Hands straight overhead.
-  { id: 'armsUp', arms: [limb(-90, -90), limb(-90, -90)] },
-  // Y / victory: arms up and out in a wide V.
-  { id: 'yShape', arms: [limb(-135, -135), limb(-45, -45)] },
-  // Cactus / goalpost: upper arms out level, forearms straight up.
-  { id: 'cactus', arms: [limb(180, -90), limb(0, -90)] },
-  // Arms down and a little out (an A-shape at the sides).
-  { id: 'armsDown', arms: [limb(113, 113), limb(67, 67)] },
-  // Hands to the head: upper arms out level, forearms angled up and inward.
-  { id: 'handsHead', arms: [limb(180, -60), limb(0, -120)] },
+export type Deg = number
+export interface ArmSpec {
+  upper: Deg
+  fore: Deg
+}
+
+/** left = +1, right = -1 — MoveNet's left_* keypoints sit at larger x than right_* (person facing the camera). */
+export type SideSign = 1 | -1
+
+/** Midline-relative degrees -> absolute atan2 radians (image space, y down). Exported for cv-sanity.ts's conversion checks. */
+export function absoluteRad(deg: Deg, side: SideSign): number {
+  const r = deg * D
+  return Math.atan2(Math.cos(r), side * Math.sin(r))
+}
+
+/** Absolute atan2 radians -> midline-relative degrees. Inverse of absoluteRad. Exported for cv-sanity.ts's conversion checks. */
+export function specDeg(absRad: number, side: SideSign): Deg {
+  return Math.atan2(side * Math.cos(absRad), Math.sin(absRad)) / D
+}
+
+function limbFromSpec(a: ArmSpec, side: SideSign): Limb {
+  return { upper: absoluteRad(a.upper, side), fore: absoluteRad(a.fore, side) }
+}
+
+/** A live arm's angles projected into spec-degree space, or null if untracked. */
+function armToSpec(limb: Limb | null, side: SideSign): ArmSpec | null {
+  return limb ? { upper: specDeg(limb.upper, side), fore: specDeg(limb.fore, side) } : null
+}
+
+export type PoseId =
+  | 'arms_down'
+  | 't_pose'
+  | 'reach_up'
+  | 'y_pose'
+  | 'goalpost'
+  | 'hands_on_hips'
+  | 'hands_on_head'
+  | 'arms_crossed'
+  | 'one_arm_up'
+  | 'one_arm_out'
+  | 'teapot'
+  | 'diagonal'
+  | 'salute'
+
+/** Ordered Tier 1 (symmetric) then Tier 2 (asymmetric) — the only place pose order is defined; everything else derives from POSE_DEFINITIONS via this. */
+export const POSE_IDS: PoseId[] = [
+  'arms_down',
+  't_pose',
+  'reach_up',
+  'y_pose',
+  'goalpost',
+  'hands_on_hips',
+  'hands_on_head',
+  'arms_crossed',
+  'one_arm_up',
+  'one_arm_out',
+  'teapot',
+  'diagonal',
+  'salute',
 ]
 
-/** Smallest absolute circular gap between two angles, 0..π. */
-export function angleDelta(a: number, b: number): number {
-  const d = Math.abs(a - b) % (Math.PI * 2)
-  return d > Math.PI ? Math.PI * 2 - d : d
+/** Extra landmark relationships, evaluated via forward kinematics off the arm angles alone (see wristPosition) — no raw keypoint positions needed. */
+export type Relation =
+  | { kind: 'wristsTogether'; maxDistance: number } // units: shoulder widths
+  | { kind: 'wristCrossesMidline' } // both wrists cross to the opposite half
+
+export interface PoseDefinition {
+  id: PoseId
+  tier: 1 | 2
+  nameKey: `pose.${PoseId}`
+  left: ArmSpec
+  right: ArmSpec
+  relations?: Relation[]
 }
 
-/** One arm's match, 0..1. Upper arm weighs more — it sets the silhouette. */
-function limbScore(m: Limb, target: Limb): number {
-  const su = Math.max(0, 1 - angleDelta(m.upper, target.upper) / POSE_ANGLE_TOL)
-  const sf = Math.max(0, 1 - angleDelta(m.fore, target.fore) / POSE_ANGLE_TOL)
-  return su * 0.6 + sf * 0.4
+const spec = (upper: Deg, fore: Deg): ArmSpec => ({ upper, fore })
+
+/**
+ * Upper-body only — nothing below the hips is read anywhere in this table or
+ * the scoring path. Tier 2 poses are authored on ONE arm; poseSimilarity
+ * already tries both straight and swapped pairing and takes the better, so
+ * `one_arm_up` matches raising EITHER arm — that's the intended semantics
+ * ("raise one arm", not "raise your left arm"), not a bug. See the
+ * pair-separation test in cv-sanity.ts.
+ */
+export const POSE_DEFINITIONS: Record<PoseId, PoseDefinition> = {
+  arms_down: { id: 'arms_down', tier: 1, nameKey: 'pose.arms_down', left: spec(0, 0), right: spec(0, 0) },
+  t_pose: { id: 't_pose', tier: 1, nameKey: 'pose.t_pose', left: spec(90, 90), right: spec(90, 90) },
+  reach_up: {
+    id: 'reach_up',
+    tier: 1,
+    nameKey: 'pose.reach_up',
+    left: spec(170, 170),
+    right: spec(170, 170),
+    relations: [{ kind: 'wristsTogether', maxDistance: 1.2 }],
+  },
+  y_pose: { id: 'y_pose', tier: 1, nameKey: 'pose.y_pose', left: spec(135, 135), right: spec(135, 135) },
+  goalpost: { id: 'goalpost', tier: 1, nameKey: 'pose.goalpost', left: spec(90, 175), right: spec(90, 175) },
+  hands_on_hips: {
+    id: 'hands_on_hips',
+    tier: 1,
+    nameKey: 'pose.hands_on_hips',
+    left: spec(35, -40),
+    right: spec(35, -40),
+  },
+  hands_on_head: {
+    id: 'hands_on_head',
+    tier: 1,
+    nameKey: 'pose.hands_on_head',
+    left: spec(75, 150),
+    right: spec(75, 150),
+    relations: [{ kind: 'wristsTogether', maxDistance: 0.7 }],
+  },
+  arms_crossed: {
+    id: 'arms_crossed',
+    tier: 1,
+    nameKey: 'pose.arms_crossed',
+    left: spec(30, -110),
+    right: spec(30, -110),
+    relations: [{ kind: 'wristCrossesMidline' }],
+  },
+  one_arm_up: { id: 'one_arm_up', tier: 2, nameKey: 'pose.one_arm_up', left: spec(170, 170), right: spec(0, 0) },
+  one_arm_out: { id: 'one_arm_out', tier: 2, nameKey: 'pose.one_arm_out', left: spec(90, 90), right: spec(0, 0) },
+  teapot: { id: 'teapot', tier: 2, nameKey: 'pose.teapot', left: spec(160, 140), right: spec(35, -40) },
+  diagonal: { id: 'diagonal', tier: 2, nameKey: 'pose.diagonal', left: spec(130, 130), right: spec(45, 45) },
+  salute: { id: 'salute', tier: 2, nameKey: 'pose.salute', left: spec(70, 140), right: spec(0, 0) },
+}
+
+/** PoseTarget[] (Limb pairs) for drawPoseTarget/the HUD — unchanged consumer contract, now built from POSE_DEFINITIONS via the authoring conversion. */
+export const POSE_LIBRARY: PoseTarget[] = POSE_IDS.map((id) => {
+  const def = POSE_DEFINITIONS[id]
+  return { id, arms: [limbFromSpec(def.left, 1), limbFromSpec(def.right, -1)] } as PoseTarget
+})
+
+const POSE_LIBRARY_BY_ID: Record<PoseId, PoseTarget> = Object.fromEntries(
+  POSE_LIBRARY.map((t) => [t.id, t]),
+) as Record<PoseId, PoseTarget>
+
+/** O(1) PoseTarget lookup by id — for renderers (InfinitePoseScreen's overlay, the SVG preview). */
+export function poseTargetFor(id: PoseId): PoseTarget {
+  return POSE_LIBRARY_BY_ID[id]
+}
+
+/* ---- Forward kinematics for relation checks (arm angles only, no raw keypoints) ---- */
+
+/**
+ * Nominal, fixed proportions in shoulder-width units — approximate human
+ * arm/forearm length. Only used for the RELATIVE "are these wrists close /
+ * crossed" check, so a systematic bias cancels out: both the live pose and
+ * the target project through the same assumed lengths.
+ */
+const UPPER_ARM_LEN = 0.9
+const FOREARM_LEN = 0.85
+
+interface Vec2 {
+  x: number
+  y: number
+}
+
+function wristPosition(a: ArmSpec, side: SideSign): Vec2 {
+  const shoulder: Vec2 = { x: side * 0.5, y: 0 }
+  const upperRad = absoluteRad(a.upper, side)
+  const elbow: Vec2 = {
+    x: shoulder.x + UPPER_ARM_LEN * Math.cos(upperRad),
+    y: shoulder.y + UPPER_ARM_LEN * Math.sin(upperRad),
+  }
+  const foreRad = absoluteRad(a.fore, side)
+  return { x: elbow.x + FOREARM_LEN * Math.cos(foreRad), y: elbow.y + FOREARM_LEN * Math.sin(foreRad) }
+}
+
+/** Relations are hard gates: any failure fails the whole pairing, regardless of angle score. */
+function relationsHold(left: ArmSpec, right: ArmSpec, relations: Relation[] | undefined): boolean {
+  if (!relations) return true
+  const lw = wristPosition(left, 1)
+  const rw = wristPosition(right, -1)
+  for (const rel of relations) {
+    if (rel.kind === 'wristsTogether') {
+      if (Math.hypot(lw.x - rw.x, lw.y - rw.y) > rel.maxDistance) return false
+    } else if (rel.kind === 'wristCrossesMidline') {
+      if (!(lw.x < 0 && rw.x > 0)) return false
+    }
+  }
+  return true
+}
+
+/** Smallest absolute circular gap between two angles, degrees, 0..180. */
+function degDelta(a: Deg, b: Deg): number {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+
+/** 1 - error/tolerance, floored at 0, for one constrained angle. */
+function constraintScore(actual: Deg, target: Deg, toleranceDeg: number): number {
+  return Math.max(0, 1 - degDelta(actual, target) / toleranceDeg)
+}
+
+/** True once either side clears the stricter pose-scoring confidence gate (POSE_SCORE_MIN_SCORE). */
+export function poseConfidenceOk(confidence: { left: number; right: number } | null): boolean {
+  if (!confidence) return false
+  return confidence.left >= POSE_SCORE_MIN_SCORE || confidence.right >= POSE_SCORE_MIN_SCORE
 }
 
 /**
- * How well a player's arms match a target pose, 0..1. Both arms present → the
- * average of the best arm-to-target pairing (you must hit BOTH). One arm (the
- * other dropped out of tracking) → its best single match, so an occluded wrist
- * never zeroes an honest attempt.
+ * How well a player's arms match a target pose, 0..1 — the MINIMUM across
+ * every constrained angle actually being scored (not a mean: a mean lets a
+ * player pass with one arm completely wrong, which was the old scorer's core
+ * bug), hard-gated by any relation, and gated by confidence. Tries both
+ * straight and swapped arm pairing and takes the better — this is what
+ * already made the old scorer side-agnostic, and for Tier 2 poses it IS the
+ * desired semantics ("raise one arm", not "raise your left arm").
  */
-export function poseSimilarity(pose: ArmPose | null, target: PoseTarget): number {
-  if (!pose) return 0
-  const [tL, tR] = target.arms
-  const arms = [pose.left, pose.right].filter((a): a is Limb => a !== null)
-  if (arms.length === 0) return 0
-  if (arms.length === 1) return Math.max(limbScore(arms[0], tL), limbScore(arms[0], tR))
-  const straight = (limbScore(arms[0], tL) + limbScore(arms[1], tR)) / 2
-  const swapped = (limbScore(arms[0], tR) + limbScore(arms[1], tL)) / 2
-  return Math.max(straight, swapped)
+export function poseSimilarity(
+  pose: ArmPose | null,
+  confidence: { left: number; right: number } | null,
+  poseId: PoseId,
+  toleranceDeg: number,
+): number {
+  if (!pose || !poseConfidenceOk(confidence)) return 0
+  const def = POSE_DEFINITIONS[poseId]
+  const liveLeft = armToSpec(pose.left, 1)
+  const liveRight = armToSpec(pose.right, -1)
+  if (!liveLeft && !liveRight) return 0
+
+  const attempt = (targetLeft: ArmSpec, targetRight: ArmSpec): number | null => {
+    if (!relationsHold(liveLeft ?? targetLeft, liveRight ?? targetRight, def.relations)) return null
+    const scores: number[] = []
+    if (liveLeft) {
+      scores.push(constraintScore(liveLeft.upper, targetLeft.upper, toleranceDeg))
+      scores.push(constraintScore(liveLeft.fore, targetLeft.fore, toleranceDeg))
+    }
+    if (liveRight) {
+      scores.push(constraintScore(liveRight.upper, targetRight.upper, toleranceDeg))
+      scores.push(constraintScore(liveRight.fore, targetRight.fore, toleranceDeg))
+    }
+    return scores.length > 0 ? Math.min(...scores) : null
+  }
+
+  const straight = attempt(def.left, def.right)
+  const swapped = attempt(def.right, def.left)
+  if (straight === null && swapped === null) return 0
+  return Math.max(straight ?? 0, swapped ?? 0)
 }
 
-/** Pick a target different from the current one, uniform over the rest. */
+/** Largest single spec-angle gap between two poses (all 4 constraints) — keeps Infinite Pose from serving two poses that look nearly identical back to back. */
+function poseAngleSpread(a: PoseId, b: PoseId): number {
+  const da = POSE_DEFINITIONS[a]
+  const db = POSE_DEFINITIONS[b]
+  return Math.max(
+    degDelta(da.left.upper, db.left.upper),
+    degDelta(da.left.fore, db.left.fore),
+    degDelta(da.right.upper, db.right.upper),
+    degDelta(da.right.fore, db.right.fore),
+  )
+}
+
+/** Below this level Infinite Pose draws from Tier 1 only. */
+export const POSE_TIER2_UNLOCK_LEVEL = 6
+/** Prefer a next pose whose angles differ from the current one by at least this much, so the player actually has to move. */
+const POSE_MOVE_MIN_DEG = 60
+
+/** Infinite Pose's next-target pick: never repeats the current pose, prefers one requiring real movement, and only draws from Tier 2 once the level unlocks it. */
+export function nextInfinitePoseId(prevId: PoseId | null, level: number, rng: () => number): PoseId {
+  const pool = POSE_IDS.filter((id) => level >= POSE_TIER2_UNLOCK_LEVEL || POSE_DEFINITIONS[id].tier === 1)
+  const notPrev = prevId ? pool.filter((id) => id !== prevId) : pool
+  const farEnough = prevId ? notPrev.filter((id) => poseAngleSpread(id, prevId) >= POSE_MOVE_MIN_DEG) : notPrev
+  const choices = farEnough.length > 0 ? farEnough : notPrev.length > 0 ? notPrev : pool
+  return choices[Math.floor(rng() * choices.length)]
+}
+
+/** Pick a library INDEX different from the current one, uniform over the rest — the 2P duel's fixed-cadence rotation (Infinite Pose uses nextInfinitePoseId, which is level/pool-aware, instead). */
 export function nextPoseIndex(prev: number, rng: () => number): number {
   if (POSE_LIBRARY.length <= 1) return 0
   let i = Math.floor(rng() * (POSE_LIBRARY.length - 1))
   if (i >= prev) i++
   return i
+}
+
+/** The 2P duel's fixed pose difficulty, driven by the existing low/medium/high sensitivity dial (MatchSetupScreen). Infinite Pose uses its own escalating table instead — see InfinitePoseScreen.tsx. */
+export const SENSITIVITY_POSE_DIFFICULTY: Record<Sensitivity, { toleranceDeg: number; passThreshold: number }> = {
+  low: { toleranceDeg: 40, passThreshold: 0.5 },
+  medium: { toleranceDeg: 32, passThreshold: 0.58 },
+  high: { toleranceDeg: 24, passThreshold: 0.68 },
 }
 
 /* ---------------- Boss (co-op) ---------------- */
@@ -200,6 +432,10 @@ export interface ModeTickInput {
   rate: number
   /** pose mode: each player's live arm directions (null when not tracked). */
   poses?: [ArmPose | null, ArmPose | null]
+  /** pose mode: each player's raw confidence backing `poses`, parallel array. */
+  poseConfidence?: [{ left: number; right: number } | null, { left: number; right: number } | null]
+  /** pose mode: this round's tolerance/threshold (from the sensitivity setting). Defaults to medium if omitted. */
+  poseDifficulty?: { toleranceDeg: number; passThreshold: number }
 }
 
 export interface ModeEvents {
@@ -310,13 +546,19 @@ export function modeTick(
         events.poseChange = true
       }
       const target = POSE_LIBRARY[state.poseIndex]
+      const { toleranceDeg, passThreshold } = input.poseDifficulty ?? SENSITIVITY_POSE_DIFFICULTY.medium
       const match: [number, number] = [0, 0]
       for (const i of [0, 1] as const) {
-        const sim = poseSimilarity(input.poses?.[i] ?? null, target)
+        const sim = poseSimilarity(
+          input.poses?.[i] ?? null,
+          input.poseConfidence?.[i] ?? null,
+          target.id,
+          toleranceDeg,
+        )
         match[i] = sim
         // Only credit the part of the match above the threshold, so a lazy
         // half-pose barely scores while a clean copy fills fast.
-        const quality = Math.max(0, (sim - POSE_MATCH_MIN) / (1 - POSE_MATCH_MIN))
+        const quality = Math.max(0, (sim - passThreshold) / (1 - passThreshold))
         fill[i] = quality * rate * dt * POSE_FILL_BOOST
       }
       pose = { target, index: state.poseIndex, match }

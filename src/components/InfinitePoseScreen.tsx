@@ -3,35 +3,63 @@ import { sfx } from '../audio/sfx'
 import { runCountdown } from '../countdown'
 import { drawPoseTarget } from '../cv/draw'
 import type { EngineFrame } from '../cv/engine'
+import type { RawPosture } from '../cv/tracking'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { useI18n } from '../i18n'
-import { POSE_LIBRARY, POSE_MATCH_MIN, nextPoseIndex, poseSimilarity } from '../modes'
+import { nextInfinitePoseId, poseConfidenceOk, poseSimilarity, poseTargetFor, type PoseId } from '../modes'
 import { InstructionCard, type Rule } from './InstructionCard'
+import { PoseStickFigure } from './PoseStickFigure'
 
 type Phase = 'idle' | 'calibrate' | 'countdown' | 'play' | 'over'
 
 /** Solo lock — quicker than the duel's 3s since there's only one body to find. */
 const LOCK_DURATION_MS = 1500
+/** The calibration overlay must never be able to hang indefinitely. */
+const CALIBRATION_TIMEOUT_MS = 8000
 
 /**
- * Escalating difficulty. Every landed pose shrinks the window for the next
- * one (down to a floor) and nudges up the accuracy required to land it (up
- * to a ceiling well short of a perfect 1 — real camera tracking never reads
- * that clean).
+ * Outer pacing envelope: how long the player has to land the CURRENT pose
+ * before it's a miss. The accuracy ramp (POSE_BANDS below — tighter
+ * tolerance, longer required continuous hold, higher threshold) already
+ * carries Infinite Pose's difficulty curve; this window only exists so
+ * standing still and never attempting a pose can't stall the run forever.
+ * Same shrinking shape as before this rewrite.
  */
-const BASE_INTERVAL_MS = 4000
-const MIN_INTERVAL_MS = 1200
-const INTERVAL_DECAY = 0.95
-const MAX_MATCH_THRESHOLD = 0.85
-const MATCH_RAMP_PER_LEVEL = 0.015
+const BASE_WINDOW_MS = 4000
+const MIN_WINDOW_MS = 1200
+const WINDOW_DECAY = 0.95
 
-function poseIntervalMs(level: number): number {
-  return Math.max(MIN_INTERVAL_MS, BASE_INTERVAL_MS * Math.pow(INTERVAL_DECAY, level))
+function poseWindowMs(level: number): number {
+  return Math.max(MIN_WINDOW_MS, BASE_WINDOW_MS * Math.pow(WINDOW_DECAY, level))
 }
 
-function matchThreshold(level: number): number {
-  return Math.min(MAX_MATCH_THRESHOLD, POSE_MATCH_MIN + level * MATCH_RAMP_PER_LEVEL)
+interface PoseBand {
+  toleranceDeg: number
+  holdMs: number
+  passThreshold: number
+}
+
+/** Infinite Pose escalation table. attemptNumber is 1-indexed (landed count + 1) — pool expansion (Tier 2 from 6) lives in nextInfinitePoseId itself. */
+function poseBandFor(attemptNumber: number): PoseBand {
+  if (attemptNumber >= 21) return { toleranceDeg: 18, holdMs: 500, passThreshold: 0.8 }
+  if (attemptNumber >= 13) return { toleranceDeg: 22, holdMs: 700, passThreshold: 0.72 }
+  if (attemptNumber >= 6) return { toleranceDeg: 28, holdMs: 900, passThreshold: 0.65 }
+  return { toleranceDeg: 35, holdMs: 1200, passThreshold: 0.55 }
+}
+
+/** Below this fraction of the video's height, the tracked torso reads too small — the player is too far away. */
+const FAR_TORSO_FRACTION = 0.12
+/** Above this fraction the torso reads too large — the player is too close and risks clipping out of frame. */
+const CLOSE_TORSO_FRACTION = 0.6
+
+/** Torso-height framing hint — shoulders + hips only (RawPosture.torsoHeight), never legs. */
+function framingHint(posture: RawPosture | null, videoHeight: number): 'stepBack' | 'comeCloser' | null {
+  if (!posture || videoHeight <= 0 || posture.torsoHeight <= 0) return null
+  const frac = posture.torsoHeight / videoHeight
+  if (frac < FAR_TORSO_FRACTION) return 'comeCloser'
+  if (frac > CLOSE_TORSO_FRACTION) return 'stepBack'
+  return null
 }
 
 const BEST_KEY = 'sb.pose.best.v1'
@@ -53,14 +81,15 @@ function saveBest(level: number): void {
 }
 
 /**
- * Infinite Pose Challenge: solo, endless. A target pose appears and the
- * window to strike it shrinks every level (poseIntervalMs) while the
- * accuracy required to land it climbs (matchThreshold) — this reuses the
- * exact pose-scoring primitives the 1v1 "Copy the Pose" duel already runs on
- * (POSE_LIBRARY / poseSimilarity / POSE_MATCH_MIN in modes.ts, and the same
- * drawPoseTarget skeleton renderer from cv/draw.ts). This screen only adds
- * the escalating solo loop around them — no new CV or matching logic. Miss
- * the window once and it's over. Reached at #pose.
+ * Infinite Pose Challenge: solo, endless. A target pose appears and must be
+ * held — score at or above the current level's passThreshold, continuously,
+ * for holdMs — before the outer per-pose window runs out. Landing it
+ * advances the level, which tightens tolerance/threshold/hold and (from
+ * level 6) opens the asymmetric Tier 2 pool. Reuses the pose-scoring
+ * primitives in modes.ts (poseSimilarity / nextInfinitePoseId /
+ * POSE_DEFINITIONS) and the same drawPoseTarget skeleton renderer
+ * cv/draw.ts already exports — this screen only owns the escalating solo
+ * loop around them. Reached at #pose.
  */
 export function InfinitePoseScreen() {
   const { t } = useI18n()
@@ -72,10 +101,16 @@ export function InfinitePoseScreen() {
   const [level, setLevel] = useState(0)
   const [best, setBest] = useState(() => loadBest())
   const [isNewBest, setIsNewBest] = useState(false)
+  const [hintText, setHintText] = useState<string | null>(null)
+  const [holdProgress, setHoldProgress] = useState(0)
+  const [calibrationStalled, setCalibrationStalled] = useState(false)
   const wakeLock = useWakeLock()
 
   const lockStartRef = useRef<number | null>(null)
-  const poseIndexRef = useRef(0)
+  const calibrationStartRef = useRef<number | null>(null)
+  const currentPoseIdRef = useRef<PoseId | null>(null)
+  const bandRef = useRef<PoseBand>(poseBandFor(1))
+  const holdStartRef = useRef<number | null>(null)
   const windowStartRef = useRef(0)
   const levelRef = useRef(0)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -132,7 +167,7 @@ export function InfinitePoseScreen() {
     [stop, wakeLock],
   )
 
-  const drawOverlay = (matchNow: number) => {
+  const drawOverlay = (matchNow: number, poseId: PoseId) => {
     const cv = overlayRef.current
     if (!cv) return
     if (cv.width !== cv.clientWidth || cv.height !== cv.clientHeight) {
@@ -142,8 +177,17 @@ export function InfinitePoseScreen() {
     const ctx = cv.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, cv.width, cv.height)
-    const target = POSE_LIBRARY[poseIndexRef.current]
+    const target = poseTargetFor(poseId)
     drawPoseTarget(ctx, cv.width, cv.height, target.arms, [matchNow, matchNow])
+  }
+
+  /** Choose the next target pose and reset both the hold accumulator and the outer window. */
+  const advancePose = (now: number) => {
+    const attemptNumber = levelRef.current + 1
+    currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptNumber, Math.random)
+    bandRef.current = poseBandFor(attemptNumber)
+    holdStartRef.current = null
+    windowStartRef.current = now
   }
 
   onFrameRef.current = (frame: EngineFrame) => {
@@ -155,6 +199,13 @@ export function InfinitePoseScreen() {
     try {
       if (phase === 'calibrate') {
         setPresentCount(frame.presentCount)
+        if (calibrationStartRef.current === null) calibrationStartRef.current = frame.now
+        const calibrationElapsed = frame.now - (calibrationStartRef.current ?? frame.now)
+
+        const posture = frame.players[0]?.posture ?? null
+        const fh = framingHint(posture, videoRef.current?.videoHeight ?? 0)
+        setHintText(fh ? t(`pose.hint.${fh}`) : null)
+
         if (frame.presentCount >= 1) {
           if (lockStartRef.current === null) {
             lockStartRef.current = frame.now
@@ -170,26 +221,59 @@ export function InfinitePoseScreen() {
           }
           lockStartRef.current = null
         }
+
+        // Safety net: the overlay must never be able to hang indefinitely.
+        if (calibrationElapsed >= CALIBRATION_TIMEOUT_MS) {
+          if (frame.presentCount >= 1) {
+            console.warn('[Calibration] Timed out waiting for a stable lock — proceeding anyway.')
+            setPhase('countdown')
+          } else {
+            setCalibrationStalled(true)
+          }
+        }
         return
       }
 
       if (phase === 'play') {
-        const pose = frame.players[0]?.arms ?? null
-        const target = POSE_LIBRARY[poseIndexRef.current]
-        const match = poseSimilarity(pose, target)
-        drawOverlay(match)
+        const p = frame.players[0]
+        const pose = p?.arms ?? null
+        const confidence = p?.armsConfidence ?? null
+        const posture = p?.posture ?? null
+        const poseId = currentPoseIdRef.current
+        if (!poseId) return
 
-        const threshold = matchThreshold(levelRef.current)
-        if (match >= threshold) {
-          // Landed it — level up, next pose is faster and stricter.
-          levelRef.current += 1
-          setLevel(levelRef.current)
-          sfx.tick()
-          poseIndexRef.current = nextPoseIndex(poseIndexRef.current, Math.random)
-          windowStartRef.current = frame.now
-          return
+        const fh = framingHint(posture, videoRef.current?.videoHeight ?? 0)
+        if (fh) {
+          setHintText(t(`pose.hint.${fh}`))
+        } else if (!poseConfidenceOk(confidence)) {
+          setHintText(t('pose.hint.showArms'))
+        } else {
+          setHintText(null)
         }
-        const window = poseIntervalMs(levelRef.current)
+
+        const band = bandRef.current
+        const match = poseSimilarity(pose, confidence, poseId, band.toleranceDeg)
+        drawOverlay(match, poseId)
+
+        if (match >= band.passThreshold) {
+          if (holdStartRef.current === null) holdStartRef.current = frame.now
+          const held = frame.now - (holdStartRef.current ?? frame.now)
+          setHoldProgress(Math.min(1, held / band.holdMs))
+          if (held >= band.holdMs) {
+            // Landed it — level up, next pose is faster and stricter.
+            levelRef.current += 1
+            setLevel(levelRef.current)
+            sfx.tick()
+            advancePose(frame.now)
+            setHoldProgress(0)
+            return
+          }
+        } else {
+          holdStartRef.current = null
+          setHoldProgress(0)
+        }
+
+        const window = poseWindowMs(levelRef.current)
         if (frame.now - windowStartRef.current >= window) {
           finish()
         }
@@ -202,9 +286,10 @@ export function InfinitePoseScreen() {
   const startPlay = () => {
     levelRef.current = 0
     setLevel(0)
-    poseIndexRef.current = nextPoseIndex(-1, Math.random)
-    windowStartRef.current = performance.now()
+    currentPoseIdRef.current = null
+    advancePose(performance.now())
     setIsNewBest(false)
+    setHoldProgress(0)
     console.log('[Calibration] Countdown complete — entering the pose game loop.')
     setPhase('play')
   }
@@ -229,6 +314,9 @@ export function InfinitePoseScreen() {
 
   const handleAgain = () => {
     lockStartRef.current = null
+    calibrationStartRef.current = null
+    setCalibrationStalled(false)
+    setHintText(null)
     setPhase(presentCount >= 1 ? 'countdown' : 'calibrate')
   }
 
@@ -258,13 +346,23 @@ export function InfinitePoseScreen() {
       />
 
       {showWorld && (
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
           <div className="flex items-center gap-4 rounded-full bg-black/60 px-6 py-2 backdrop-blur">
             <span className="text-xs font-semibold uppercase tracking-wider text-white/60">
               {t('pose.level')}
             </span>
             <span className="text-2xl font-black tabular-nums">{level}</span>
           </div>
+          {phase === 'play' && holdProgress > 0 && (
+            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/20">
+              <div className="h-full rounded-full bg-lime-400" style={{ width: `${holdProgress * 100}%` }} />
+            </div>
+          )}
+          {phase === 'play' && hintText && (
+            <div className="rounded-full bg-black/60 px-4 py-1 text-xs font-semibold text-white/85 backdrop-blur">
+              {hintText}
+            </div>
+          )}
         </div>
       )}
 
@@ -298,6 +396,7 @@ export function InfinitePoseScreen() {
         <InstructionCard
           title={t('pose.title')}
           subtitle={t('pose.subtitle')}
+          preview={<PoseStickFigure left={{ upper: 90, fore: 90 }} right={{ upper: 90, fore: 90 }} />}
           rules={rules}
           onStart={handleRulesStart}
           onBack={goHome}
@@ -316,15 +415,35 @@ export function InfinitePoseScreen() {
               {t('runner.startingCamera')}
             </div>
           )}
-          {status === 'running' && phase === 'calibrate' && (
-            <div
-              className="rounded-full px-8 py-4 text-lg font-black"
-              style={{
-                background: presentCount >= 1 ? '#a3e635' : 'rgba(255,255,255,0.15)',
-                color: presentCount >= 1 ? '#000' : '#fff',
-              }}
-            >
-              {presentCount >= 1 ? t('pose.ready') : t('pose.stepIn')}
+          {status === 'running' && phase === 'calibrate' && !calibrationStalled && (
+            <>
+              <div
+                className="rounded-full px-8 py-4 text-lg font-black"
+                style={{
+                  background: presentCount >= 1 ? '#a3e635' : 'rgba(255,255,255,0.15)',
+                  color: presentCount >= 1 ? '#000' : '#fff',
+                }}
+              >
+                {presentCount >= 1 ? t('pose.ready') : t('pose.stepIn')}
+              </div>
+              {hintText && (
+                <div className="rounded-full bg-black/70 px-5 py-2 text-sm font-semibold text-white/80">
+                  {hintText}
+                </div>
+              )}
+            </>
+          )}
+          {status === 'running' && phase === 'calibrate' && calibrationStalled && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="max-w-sm rounded-xl bg-black/70 px-5 py-3 text-center text-sm font-semibold text-white/85">
+                {hintText ?? t('pose.stepIn')}
+              </div>
+              <button
+                onClick={() => setPhase('countdown')}
+                className="rounded-full bg-lime-400 px-6 py-3 text-sm font-black text-black"
+              >
+                {t('common.letsGo')}
+              </button>
             </div>
           )}
           {status === 'error' && error && (

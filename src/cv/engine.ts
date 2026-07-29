@@ -136,6 +136,8 @@ export interface EnginePlayerFrame {
   posture: RawPosture | null
   /** Both arms' segment directions for the pose-copy mode (null if unreliable). */
   arms: ArmPose | null
+  /** Per-side raw confidence backing `arms` — pose-scoring's stricter gate. */
+  armsConfidence: { left: number; right: number }
 }
 
 export interface EngineFrame {
@@ -560,6 +562,7 @@ export class PoseEngine {
         speed: t.speed,
         posture: t.posture,
         arms: t.arms,
+        armsConfidence: t.armsConfidence,
       }))
 
       this.onFrame({

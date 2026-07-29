@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useI18n } from '../i18n'
 
 /** One rule line: an emoji glyph and a short instruction. */
@@ -11,6 +12,8 @@ interface Props {
   title: string
   /** Optional one-line subtitle under the title. */
   subtitle?: string
+  /** Optional illustrative preview (e.g. an SVG pose figure) shown under the header. */
+  preview?: ReactNode
   /** The ordered "how to play" rules shown as a list. */
   rules: Rule[]
   /** Primary CTA label (defaults to "Let's go"). */
@@ -25,7 +28,7 @@ interface Props {
  * arcade/neon tokens (bg-page/card, accent, edge) so it matches every theme and
  * layers over the menu backdrop with high contrast.
  */
-export function InstructionCard({ title, subtitle, rules, startLabel, onStart, onBack }: Props) {
+export function InstructionCard({ title, subtitle, preview, rules, startLabel, onStart, onBack }: Props) {
   const { t } = useI18n()
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -34,6 +37,14 @@ export function InstructionCard({ title, subtitle, rules, startLabel, onStart, o
           <h2 className="text-2xl font-black text-t1 landscape:text-xl">{title}</h2>
           {subtitle && <p className="mt-1 text-sm text-t3">{subtitle}</p>}
         </header>
+
+        {preview && (
+          <div className="mb-4 flex justify-center landscape:mb-2">
+            <div className="flex h-28 w-28 items-center justify-center rounded-2xl border border-edge bg-card p-2 text-accent landscape:h-20 landscape:w-20">
+              {preview}
+            </div>
+          </div>
+        )}
 
         <ul className="mb-6 flex flex-col gap-3 landscape:mb-3 landscape:gap-2">
           {rules.map((r, i) => (
