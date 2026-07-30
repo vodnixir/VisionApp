@@ -585,6 +585,62 @@ export function armConfidence(pose: Pose): { left: number; right: number } {
   return { left: sideMin('left'), right: sideMin('right') }
 }
 
+/* ---------------- Skeleton (live overlay) ---------------- */
+
+/** Every joint the live skeleton overlay draws or gates on. Null when that joint is below KEYPOINT_MIN_SCORE — never a garbage position. */
+export interface Skeleton {
+  leftShoulder: Point | null
+  rightShoulder: Point | null
+  leftElbow: Point | null
+  rightElbow: Point | null
+  leftWrist: Point | null
+  rightWrist: Point | null
+  leftHip: Point | null
+  rightHip: Point | null
+  leftKnee: Point | null
+  rightKnee: Point | null
+  leftAnkle: Point | null
+  rightAnkle: Point | null
+}
+
+export const EMPTY_SKELETON: Skeleton = {
+  leftShoulder: null,
+  rightShoulder: null,
+  leftElbow: null,
+  rightElbow: null,
+  leftWrist: null,
+  rightWrist: null,
+  leftHip: null,
+  rightHip: null,
+  leftKnee: null,
+  rightKnee: null,
+  leftAnkle: null,
+  rightAnkle: null,
+}
+
+/** Raw joint positions (full-frame px) for the live skeleton overlay — same confidence gate as everything else in the pipeline. */
+export function bodySkeleton(pose: Pose): Skeleton {
+  return {
+    leftShoulder: confidentPoint(pose, 'left_shoulder'),
+    rightShoulder: confidentPoint(pose, 'right_shoulder'),
+    leftElbow: confidentPoint(pose, 'left_elbow'),
+    rightElbow: confidentPoint(pose, 'right_elbow'),
+    leftWrist: confidentPoint(pose, 'left_wrist'),
+    rightWrist: confidentPoint(pose, 'right_wrist'),
+    leftHip: confidentPoint(pose, 'left_hip'),
+    rightHip: confidentPoint(pose, 'right_hip'),
+    leftKnee: confidentPoint(pose, 'left_knee'),
+    rightKnee: confidentPoint(pose, 'right_knee'),
+    leftAnkle: confidentPoint(pose, 'left_ankle'),
+    rightAnkle: confidentPoint(pose, 'right_ankle'),
+  }
+}
+
+/** Both wrists AND both elbows confidently detected — the minimum needed for a fair pose-mode start. Never requires legs. */
+export function armsReady(skeleton: Skeleton | null | undefined): boolean {
+  return !!(skeleton?.leftWrist && skeleton?.rightWrist && skeleton?.leftElbow && skeleton?.rightElbow)
+}
+
 export function extractMotionKeypoints(pose: Pose): KpMap {
   const map: KpMap = new Map()
   for (const k of pose.keypoints) {
@@ -696,6 +752,8 @@ export class PlayerTracker implements SlotAnchor {
   arms: ArmPose | null = null
   /** Per-side raw confidence backing arms — the pose-scoring modes' stricter gate. */
   armsConfidence: { left: number; right: number } = { left: 0, right: 0 }
+  /** Raw joint positions for the live skeleton overlay (null per-joint when unconfident). */
+  skeleton: Skeleton = EMPTY_SKELETON
   /** Running clothing-colour signature — the identity matcher's tie-breaker. */
   sig: ColorSig | null = null
   /** Latest frame's motion keypoints (full-frame px) — read by the hitmarker FX. */
@@ -752,6 +810,7 @@ export class PlayerTracker implements SlotAnchor {
     // Arm directions for the pose-copy mode (same lifetime as the posture).
     this.arms = armPose(candidate.pose)
     this.armsConfidence = armConfidence(candidate.pose)
+    this.skeleton = bodySkeleton(candidate.pose)
     // Clothing-colour signature (engine-sampled): smooth it so a single noisy
     // frame can't flip identity, and seed it on the first profiled frame.
     if (candidate.sig) this.sig = blendSig(this.sig, candidate.sig, alphaFromTau(safeDt, SIG_TAU_S))
@@ -812,6 +871,7 @@ export class PlayerTracker implements SlotAnchor {
     this.posture = null
     this.arms = null
     this.armsConfidence = { left: 0, right: 0 }
+    this.skeleton = EMPTY_SKELETON
     this.speed = 0
     this.framesSinceSeen = Infinity
   }

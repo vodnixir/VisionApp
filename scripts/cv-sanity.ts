@@ -24,6 +24,7 @@ import {
   modeTick,
   nextInfinitePoseId,
   nextPoseIndex,
+  poseArmScores,
   poseSimilarity,
   poseTargetFor,
   specDeg,
@@ -647,6 +648,47 @@ ok('poseSimilarity: Tier 2 poses match either arm (side-agnostic by design)', ()
   // A single visible arm that matches one target arm still gets full single credit.
   const oneArm: ArmPose = { left: { ...target.arms[0] }, right: null }
   assert.ok(poseSimilarity(oneArm, confident, 'one_arm_up', 32) > 0.99, 'an occluded arm never zeroes an honest try')
+})
+
+ok('poseArmScores: per-arm breakdown for the live skeleton colors', () => {
+  const confident = { left: 1, right: 1 }
+  const target = poseTargetFor('t_pose')
+  const exact: ArmPose = { left: { ...target.arms[0] }, right: { ...target.arms[1] } }
+
+  const bothGood = poseArmScores(exact, confident, 't_pose', 32)
+  assert.ok((bothGood.left ?? 0) > 0.99, 'a correctly held left arm scores high (green)')
+  assert.ok((bothGood.right ?? 0) > 0.99, 'a correctly held right arm scores high (green)')
+
+  const down = poseTargetFor('arms_down')
+  const bothWrong: ArmPose = { left: { ...down.arms[0] }, right: { ...down.arms[1] } }
+  const wrongScores = poseArmScores(bothWrong, confident, 't_pose', 32)
+  assert.equal(wrongScores.left, 0, 'a wrong left arm scores 0 (red)')
+  assert.equal(wrongScores.right, 0, 'a wrong right arm scores 0 (red)')
+
+  // One confident arm, one below the pose-scoring gate — the low-confidence
+  // arm reads as "can't tell" (null/grey), never as red, even though its
+  // Limb exists (cleared the looser 0.3 existence gate). This is the whole
+  // point of poseArmScores existing separately from poseSimilarity, which
+  // only gates confidence once, globally, for the pass/fail decision.
+  const mixedConfidence = { left: 1, right: POSE_SCORE_MIN_SCORE - 0.1 }
+  const mixed = poseArmScores(exact, mixedConfidence, 't_pose', 32)
+  assert.ok((mixed.left ?? 0) > 0.99, 'the confident arm still scores normally')
+  assert.equal(mixed.right, null, 'the low-confidence arm is null (grey), not scored as wrong')
+
+  // A relation failure (reach_up needs wrists together) fails BOTH arms, even
+  // though the LEFT arm's angles alone are a perfect match: left reaches up
+  // as required, right is deliberately sent all the way down instead, so the
+  // wrists end up nowhere near each other.
+  const reachTarget = poseTargetFor('reach_up')
+  const wristsApart: ArmPose = {
+    left: { ...reachTarget.arms[0] },
+    right: { upper: absoluteRad(0, -1), fore: absoluteRad(0, -1) },
+  }
+  const relationBroken = poseArmScores(wristsApart, confident, 'reach_up', 32)
+  assert.equal(relationBroken.left, 0, 'a broken relation fails the left arm too, even though ITS angles are perfect')
+  assert.equal(relationBroken.right, 0, 'a broken relation fails the arm that actually moved')
+
+  assert.deepEqual(poseArmScores(null, confident, 't_pose', 32), { left: null, right: null }, 'no tracking → both null')
 })
 
 ok('pose library: every pair is separated by >=35° on some spec angle under the matcher\'s pairing, except the one documented exception', () => {

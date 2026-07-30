@@ -1,6 +1,6 @@
 import { t } from '../i18n'
 import { canvasTheme, playerColors } from '../theme'
-import type { BBox, Limb } from './tracking'
+import type { BBox, Limb, Point, Skeleton } from './tracking'
 
 /** Everything the canvas HUD needs, updated per inference frame via engine config. */
 export interface HudState {
@@ -34,8 +34,13 @@ export interface HudState {
   panelNames?: [string, string]
   /** Pose-copy mode: the two target arms to draw as a silhouette (undefined = other modes). */
   poseTarget?: [Limb, Limb]
-  /** Pose-copy mode: each player's live match 0..1, for the per-side hit indicator. */
-  poseMatch?: [number, number]
+  /**
+   * Pose-copy mode: each player's per-arm live score (0..1, null = not enough
+   * confidence to judge that arm) for the live skeleton's correctness colors.
+   */
+  poseArmMatch?: [{ left: number | null; right: number | null }, { left: number | null; right: number | null }]
+  /** Pose-copy mode: tolerance/hold/threshold band driving this round — passThreshold colors the live skeleton green/red. */
+  posePassThreshold?: number
 }
 
 export const DEFAULT_HUD: HudState = {
@@ -197,6 +202,7 @@ export function drawMatchHud(
   h: number,
   hud: HudState,
   names: [string, string],
+  mirror: boolean,
 ): void {
   const th = canvasTheme()
   const pad = Math.round(w * 0.015)
@@ -304,87 +310,97 @@ export function drawMatchHud(
     ctx.restore()
   }
 
-  if (hud.poseTarget) drawPoseTarget(ctx, w, h, hud.poseTarget, hud.poseMatch)
+  if (hud.poseTarget) drawPoseTarget(ctx, w, h, hud.poseTarget, mirror)
 
   if (hud.frozen) drawFreezeBanner(ctx, w, h)
 }
 
+/** Identity colors for the target figure — by SCREEN SIDE, not anatomy, so "match the cyan arm with the arm on the cyan side" is literally correct. */
+const TARGET_LEFT_COLOR = '#00E5FF'
+const TARGET_RIGHT_COLOR = '#FF9100'
+const TARGET_TORSO_COLOR = '#FFFFFF'
+const TARGET_LEG_COLOR = '#6B7280'
+
 /**
- * Pose-copy target: a stick figure of the pose the players must strike, centered
- * below the timer. A colored pip on each side pulses brighter as that player's
- * live match climbs — instant "you've got it" feedback on the TV and the clip.
+ * Pose-copy target: a large stick figure of the pose to strike, pinned to one
+ * side of the screen (never over the player's own body) so the live video and
+ * skeleton stay unobstructed. Arms are colored by which SCREEN side they're
+ * drawn on — cyan left / orange right — and drawn in the same mirrored screen
+ * space as the live video feed (see `mirror`), so the color match is literally
+ * correct for the player regardless of the mirror setting. Legs are always a
+ * fixed, dim neutral stance: only arms are ever scored, so a "real" leg pose
+ * here would be misleading. Solid opaque backing + thick strokes for
+ * legibility from a few meters away.
  */
 export function drawPoseTarget(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   arms: [Limb, Limb],
-  match?: [number, number],
+  mirror: boolean,
 ): void {
-  const th = canvasTheme()
-  const cx = w / 2
-  const cy = h * 0.37
-  const s = h * 0.1 // unit length
-  const lw = Math.max(4, s * 0.16)
-
-  // Backing panel so the figure reads over any footage.
   ctx.save()
-  const panelW = s * 3.6
-  const panelH = s * 4.2
-  ctx.globalAlpha = 0.82
-  ctx.fillStyle = th.panelBg
-  roundedRect(ctx, cx - panelW / 2, cy - s * 2.0, panelW, panelH, 16)
+
+  const panelW = w * 0.4
+  const panelH = h * 0.58
+  const px = w - panelW - w * 0.02
+  const py = h * 0.23
+  const cx = px + panelW / 2
+  const cy = py + panelH * 0.46
+  const s = panelH * 0.11 // unit length — large relative to the panel by design
+
+  // Solid, opaque backing — a translucent panel over live video reads as
+  // nothing from across a room.
+  ctx.fillStyle = '#0b0f14'
+  roundedRect(ctx, px, py, panelW, panelH, 20)
   ctx.fill()
-  ctx.globalAlpha = 1
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+  ctx.lineWidth = 2
+  ctx.stroke()
 
-  // Caption.
-  const capSize = Math.round(s * 0.5)
-  ctx.font = `${th.glow ? 900 : 700} ${capSize}px ${th.font}`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'alphabetic'
-  ctx.fillStyle = th.glow ? '#ffe600' : th.inkMuted
-  ctx.fillText(t('hud.copyPose'), cx, cy - s * 1.35)
+  const headR = s * 0.42
+  const headC = { x: cx, y: cy - s * 0.9 }
+  const shoulderY = cy - s * 0.25
+  const shoulderHalfW = s * 0.62
+  const lShoulder = { x: cx - shoulderHalfW, y: shoulderY }
+  const rShoulder = { x: cx + shoulderHalfW, y: shoulderY }
+  const hip = { x: cx, y: cy + s * 1.1 }
+  const lineW = Math.max(7, s * 0.22)
 
-  // Skeleton geometry.
-  const headR = s * 0.36
-  const headC = { x: cx, y: cy - s * 0.75 }
-  const shoulderY = cy - s * 0.2
-  const lShoulder = { x: cx - s * 0.5, y: shoulderY }
-  const rShoulder = { x: cx + s * 0.5, y: shoulderY }
-  const hip = { x: cx, y: cy + s * 1.05 }
-
-  ctx.strokeStyle = th.ink
-  ctx.fillStyle = th.ink
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.lineWidth = lw
-  if (th.glow) {
-    ctx.shadowColor = th.ink
-    ctx.shadowBlur = 10
-  }
 
-  // Head.
+  // Head + torso — white.
+  ctx.fillStyle = TARGET_TORSO_COLOR
   ctx.beginPath()
   ctx.arc(headC.x, headC.y, headR, 0, Math.PI * 2)
   ctx.fill()
-  // Spine.
+  ctx.strokeStyle = TARGET_TORSO_COLOR
+  ctx.lineWidth = lineW
   ctx.beginPath()
   ctx.moveTo(cx, shoulderY - s * 0.05)
   ctx.lineTo(hip.x, hip.y)
-  // Legs.
-  ctx.moveTo(hip.x, hip.y)
-  ctx.lineTo(cx - s * 0.4, hip.y + s * 1.0)
-  ctx.moveTo(hip.x, hip.y)
-  ctx.lineTo(cx + s * 0.4, hip.y + s * 1.0)
-  // Shoulder bar.
   ctx.moveTo(lShoulder.x, lShoulder.y)
   ctx.lineTo(rShoulder.x, rShoulder.y)
   ctx.stroke()
 
-  // Arms: upper arm along `upper`, forearm along `fore`, each one unit long.
-  const upperLen = s * 0.75
-  const foreLen = s * 0.72
-  const drawArm = (shoulder: { x: number; y: number }, arm: Limb) => {
+  // Legs — dim grey, identical relaxed stance every pose (never scored).
+  ctx.strokeStyle = TARGET_LEG_COLOR
+  ctx.lineWidth = lineW
+  ctx.beginPath()
+  ctx.moveTo(hip.x, hip.y)
+  ctx.lineTo(cx - s * 0.4, hip.y + s * 1.0)
+  ctx.moveTo(hip.x, hip.y)
+  ctx.lineTo(cx + s * 0.4, hip.y + s * 1.0)
+  ctx.stroke()
+
+  // Arms: `arms[0]` is anatomical LEFT. Which screen side that lands on
+  // depends on mirroring — same rule the live video itself is drawn under.
+  const screenLeftArm = mirror ? arms[0] : arms[1]
+  const screenRightArm = mirror ? arms[1] : arms[0]
+  const upperLen = s * 0.85
+  const foreLen = s * 0.8
+  const drawArm = (shoulder: Point, arm: Limb, color: string) => {
     const elbow = {
       x: shoulder.x + Math.cos(arm.upper) * upperLen,
       y: shoulder.y + Math.sin(arm.upper) * upperLen,
@@ -393,41 +409,122 @@ export function drawPoseTarget(
       x: elbow.x + Math.cos(arm.fore) * foreLen,
       y: elbow.y + Math.sin(arm.fore) * foreLen,
     }
+    ctx.strokeStyle = color
+    ctx.lineWidth = lineW
     ctx.beginPath()
     ctx.moveTo(shoulder.x, shoulder.y)
     ctx.lineTo(elbow.x, elbow.y)
     ctx.lineTo(wrist.x, wrist.y)
     ctx.stroke()
-    // Hand dot.
+    ctx.fillStyle = color
     ctx.beginPath()
-    ctx.arc(wrist.x, wrist.y, lw * 0.7, 0, Math.PI * 2)
+    ctx.arc(wrist.x, wrist.y, lineW * 0.8, 0, Math.PI * 2)
     ctx.fill()
   }
-  drawArm(lShoulder, arms[0])
-  drawArm(rShoulder, arms[1])
-  ctx.shadowBlur = 0
+  drawArm(lShoulder, screenLeftArm, TARGET_LEFT_COLOR)
+  drawArm(rShoulder, screenRightArm, TARGET_RIGHT_COLOR)
 
-  // Per-player match pips flanking the figure.
-  if (match) {
-    const pipY = cy - s * 1.35
-    const drawPip = (x: number, m: number, index: 0 | 1) => {
-      const color = playerColors()[index]
-      const on = m >= 0.85
-      ctx.globalAlpha = 0.35 + 0.65 * Math.min(1, m)
-      ctx.fillStyle = color
-      if (th.glow && on) {
-        ctx.shadowColor = color
-        ctx.shadowBlur = 18
-      }
-      ctx.beginPath()
-      ctx.arc(x, pipY, s * (0.16 + 0.1 * Math.min(1, m)), 0, Math.PI * 2)
-      ctx.fill()
-      ctx.shadowBlur = 0
-      ctx.globalAlpha = 1
-    }
-    drawPip(cx - panelW / 2 + s * 0.35, match[0], 0)
-    drawPip(cx + panelW / 2 - s * 0.35, match[1], 1)
+  ctx.restore()
+}
+
+const SKELETON_NEUTRAL = '#6B7280'
+const SKELETON_MATCH = '#22C55E'
+const SKELETON_MISMATCH = '#EF4444'
+
+/** Green when this arm's live score clears the pass threshold, red when it doesn't, grey when there isn't enough confidence — or no active target — to judge it at all. */
+function limbColor(score: number | null | undefined, passThreshold: number): string {
+  if (score === null || score === undefined) return SKELETON_NEUTRAL
+  return score >= passThreshold ? SKELETON_MATCH : SKELETON_MISMATCH
+}
+
+/** Shoulder width in px — the scale unit for the skeleton overlay, so it sizes with how close the player is rather than a fixed pixel count. Falls back to hip width, then a frame-relative default when neither is visible. */
+function skeletonScale(skeleton: Skeleton, vw: number): number {
+  if (skeleton.leftShoulder && skeleton.rightShoulder) {
+    return Math.abs(skeleton.leftShoulder.x - skeleton.rightShoulder.x)
   }
+  if (skeleton.leftHip && skeleton.rightHip) {
+    return Math.abs(skeleton.leftHip.x - skeleton.rightHip.x)
+  }
+  return vw * 0.09
+}
+
+/**
+ * The player's own tracked skeleton, drawn directly on their body: large dots
+ * at every confident joint and thick connecting lines, sized relative to
+ * their shoulder width so it reads at any distance from the camera. Arm
+ * segments are colored by live correctness (green/red/grey via armMatch);
+ * everything else — shoulder bar, torso, legs — is always neutral grey, since
+ * only arms are ever scored. Coordinates are raw video px, mirrored here
+ * exactly the way every other point-shaped overlay in this file mirrors a
+ * point (`vw - x`, not the bbox `vw - x - w` rule), so it lands on the
+ * player's real limbs on a mirrored canvas.
+ */
+export function drawSkeleton(
+  ctx: CanvasRenderingContext2D,
+  skeleton: Skeleton,
+  vw: number,
+  mirror: boolean,
+  armMatch: { left: number | null; right: number | null } | null,
+  passThreshold: number,
+): void {
+  const unit = skeletonScale(skeleton, vw)
+  const dotR = Math.max(8, unit * 0.16)
+  const lineW = Math.max(6, unit * 0.14)
+  const mx = (p: Point): number => (mirror ? vw - p.x : p.x)
+
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  const line = (a: Point | null, b: Point | null, color: string): void => {
+    if (!a || !b) return
+    ctx.strokeStyle = color
+    ctx.lineWidth = lineW
+    ctx.beginPath()
+    ctx.moveTo(mx(a), a.y)
+    ctx.lineTo(mx(b), b.y)
+    ctx.stroke()
+  }
+  const dot = (p: Point | null, color: string): void => {
+    if (!p) return
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(mx(p), p.y, dotR, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  const leftColor = limbColor(armMatch?.left, passThreshold)
+  const rightColor = limbColor(armMatch?.right, passThreshold)
+
+  // Torso + legs — always neutral, never scored.
+  line(skeleton.leftShoulder, skeleton.rightShoulder, SKELETON_NEUTRAL)
+  line(skeleton.leftShoulder, skeleton.leftHip, SKELETON_NEUTRAL)
+  line(skeleton.rightShoulder, skeleton.rightHip, SKELETON_NEUTRAL)
+  line(skeleton.leftHip, skeleton.rightHip, SKELETON_NEUTRAL)
+  line(skeleton.leftHip, skeleton.leftKnee, SKELETON_NEUTRAL)
+  line(skeleton.leftKnee, skeleton.leftAnkle, SKELETON_NEUTRAL)
+  line(skeleton.rightHip, skeleton.rightKnee, SKELETON_NEUTRAL)
+  line(skeleton.rightKnee, skeleton.rightAnkle, SKELETON_NEUTRAL)
+
+  // Arms — colored by live correctness.
+  line(skeleton.leftShoulder, skeleton.leftElbow, leftColor)
+  line(skeleton.leftElbow, skeleton.leftWrist, leftColor)
+  line(skeleton.rightShoulder, skeleton.rightElbow, rightColor)
+  line(skeleton.rightElbow, skeleton.rightWrist, rightColor)
+
+  dot(skeleton.leftShoulder, SKELETON_NEUTRAL)
+  dot(skeleton.rightShoulder, SKELETON_NEUTRAL)
+  dot(skeleton.leftHip, SKELETON_NEUTRAL)
+  dot(skeleton.rightHip, SKELETON_NEUTRAL)
+  dot(skeleton.leftKnee, SKELETON_NEUTRAL)
+  dot(skeleton.rightKnee, SKELETON_NEUTRAL)
+  dot(skeleton.leftAnkle, SKELETON_NEUTRAL)
+  dot(skeleton.rightAnkle, SKELETON_NEUTRAL)
+  dot(skeleton.leftElbow, leftColor)
+  dot(skeleton.rightElbow, rightColor)
+  dot(skeleton.leftWrist, leftColor)
+  dot(skeleton.rightWrist, rightColor)
+
   ctx.restore()
 }
 

@@ -143,8 +143,10 @@ export function drawScoreboard(
   }
 
   // PLAYING scoreboard: the shared HUD (bars / timer / freeze banner) plus
-  // giant center percentages readable from the back of the room.
-  drawMatchHud(ctx, W, H, state.hud, state.names)
+  // giant center percentages readable from the back of the room. The TV cast
+  // shows graphics only (no live video to mirror against), so the pose
+  // target's screen-side coloring just uses the app's default orientation.
+  drawMatchHud(ctx, W, H, state.hud, state.names, true)
   ctx.save()
   ctx.textBaseline = 'middle'
   ctx.font = `${th.glow ? 900 : 700} ${Math.round(H * 0.3)}px ${th.font}`

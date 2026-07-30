@@ -337,6 +337,68 @@ export function poseSimilarity(
   return Math.max(straight ?? 0, swapped ?? 0)
 }
 
+export interface PoseArmScores {
+  /** null = this arm's own confidence hasn't cleared POSE_SCORE_MIN_SCORE — not enough to judge, not "wrong". */
+  left: number | null
+  right: number | null
+}
+
+/**
+ * Per-arm breakdown for live color-coded feedback (green ~1, red ~0, grey =
+ * null when THAT SPECIFIC arm's confidence is too low to judge). Unlike
+ * poseSimilarity's pass/fail gate — deliberately lenient, either arm being
+ * confident is enough to score the attempt at all — this grades each arm on
+ * its OWN confidence, because a low-confidence arm should read as "can't
+ * tell", not "wrong". Uses the same best-of-straight/swapped pairing
+ * poseSimilarity itself would pick (by comparing the full attempt score), so
+ * a limb's color is never inconsistent with why the hold is or isn't
+ * progressing.
+ */
+export function poseArmScores(
+  pose: ArmPose | null,
+  confidence: { left: number; right: number } | null,
+  poseId: PoseId,
+  toleranceDeg: number,
+): PoseArmScores {
+  if (!pose) return { left: null, right: null }
+  const def = POSE_DEFINITIONS[poseId]
+  const liveLeft = armToSpec(pose.left, 1)
+  const liveRight = armToSpec(pose.right, -1)
+
+  const attempt = (targetLeft: ArmSpec, targetRight: ArmSpec): number | null => {
+    if (!relationsHold(liveLeft ?? targetLeft, liveRight ?? targetRight, def.relations)) return null
+    const scores: number[] = []
+    if (liveLeft) {
+      scores.push(constraintScore(liveLeft.upper, targetLeft.upper, toleranceDeg))
+      scores.push(constraintScore(liveLeft.fore, targetLeft.fore, toleranceDeg))
+    }
+    if (liveRight) {
+      scores.push(constraintScore(liveRight.upper, targetRight.upper, toleranceDeg))
+      scores.push(constraintScore(liveRight.fore, targetRight.fore, toleranceDeg))
+    }
+    return scores.length > 0 ? Math.min(...scores) : null
+  }
+  const straight = attempt(def.left, def.right)
+  const swapped = attempt(def.right, def.left)
+  const useSwapped = (swapped ?? -1) > (straight ?? -1)
+  const targetLeft = useSwapped ? def.right : def.left
+  const targetRight = useSwapped ? def.left : def.right
+  const relationsOk = relationsHold(liveLeft ?? targetLeft, liveRight ?? targetRight, def.relations)
+
+  const armScore = (live: ArmSpec | null, target: ArmSpec, conf: number): number | null => {
+    if (!live || conf < POSE_SCORE_MIN_SCORE) return null
+    if (!relationsOk) return 0
+    return Math.min(
+      constraintScore(live.upper, target.upper, toleranceDeg),
+      constraintScore(live.fore, target.fore, toleranceDeg),
+    )
+  }
+  return {
+    left: armScore(liveLeft, targetLeft, confidence?.left ?? 0),
+    right: armScore(liveRight, targetRight, confidence?.right ?? 0),
+  }
+}
+
 /** Largest single spec-angle gap between two poses (all 4 constraints) — keeps Infinite Pose from serving two poses that look nearly identical back to back. */
 function poseAngleSpread(a: PoseId, b: PoseId): number {
   const da = POSE_DEFINITIONS[a]

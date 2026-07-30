@@ -15,6 +15,7 @@ import { ErrorOverlay, LoadingOverlay } from './components/StatusOverlay'
 import { TournamentScreen } from './components/TournamentScreen'
 import { DEFAULT_HUD } from './cv/draw'
 import type { EngineFrame, EngineHints } from './cv/engine'
+import { armsReady } from './cv/tracking'
 import { useGameState } from './hooks/useGameState'
 import { useWakeLock } from './hooks/useWakeLock'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
@@ -38,6 +39,7 @@ import {
   bossCharge,
   createModeState,
   modeTick,
+  poseArmScores,
   type ModeState,
 } from './modes'
 import {
@@ -107,6 +109,15 @@ function battleRules(
 
 /** Both fighters must stay in frame this long before the countdown starts. */
 const LOCK_DURATION_MS = 3000
+
+/**
+ * Copy the Pose's arm-visibility prerequisite has no manual "continue anyway"
+ * button the way Infinite Pose's calibration does — so it must never be able
+ * to wait forever either. After this long with both players present but
+ * arms still not confirmed (unusual lighting/clothing/angle), the gate
+ * relaxes and the match starts anyway rather than stalling indefinitely.
+ */
+const POSE_PREREQ_TIMEOUT_MS = 10000
 
 /** The canvas celebrates alone for this long before the host controls appear. */
 const GAME_OVER_UI_DELAY_MS = 2200
@@ -212,6 +223,8 @@ export default function App() {
   /** Which bracket match is being played right now (null = quick match). */
   const [pendingBracket, setPendingBracket] = useState<{ round: number; index: number } | null>(null)
   const accumRef = useRef<Accumulators>(createAccumulators())
+  /** When both players first appeared present during calibration — the pose-mode arm-visibility timeout measures from here, independent of the lock/relock cycle. */
+  const posePrereqWaitRef = useRef<number | null>(null)
   const recorderRef = useRef(new MatchRecorder())
   const showRef = useRef<ShowCast | null>(null)
   showRef.current ??= new ShowCast()
@@ -302,7 +315,27 @@ export default function App() {
       if (g.calibrationPhase === 'COUNTDOWN') return
 
       const a = accumRef.current
-      if (frame.presentCount === 2) {
+      const bothPresent = frame.presentCount === 2
+      if (bothPresent) {
+        posePrereqWaitRef.current ??= frame.now
+      } else {
+        posePrereqWaitRef.current = null
+      }
+      // Copy the Pose needs both players' arms actually visible before the
+      // match can start — "2 bodies present" alone (the generic check every
+      // other mode uses) can lock in a framing that only shows heads and
+      // shoulders, which makes the pose scorer's confidence gate fire
+      // permanently and the round is unplayable from the first second. There
+      // is no manual override here (unlike Infinite Pose's calibration), so
+      // after a generous wait the requirement relaxes on its own — this must
+      // never be able to wait forever either.
+      const armsWaitedLongEnough =
+        frame.now - (posePrereqWaitRef.current ?? frame.now) >= POSE_PREREQ_TIMEOUT_MS
+      const posePrereqOk =
+        g.settings.matchMode !== 'pose' ||
+        (armsReady(frame.players[0]?.skeleton) && armsReady(frame.players[1]?.skeleton)) ||
+        armsWaitedLongEnough
+      if (bothPresent && posePrereqOk) {
         if (a.lockStart === null) {
           a.lockStart = frame.now
           sfx.lock()
@@ -346,6 +379,7 @@ export default function App() {
       }
 
       // Mode layer: how much fill/burn this frame + what just happened.
+      const poseDifficulty = mode === 'pose' ? SENSITIVITY_POSE_DIFFICULTY[g.settings.sensitivity] : undefined
       const tick = modeTick(a.modeState, {
         dt: frame.dt,
         elapsedMs: elapsed,
@@ -356,7 +390,7 @@ export default function App() {
           mode === 'pose'
             ? [frame.players[0].armsConfidence, frame.players[1].armsConfidence]
             : undefined,
-        poseDifficulty: mode === 'pose' ? SENSITIVITY_POSE_DIFFICULTY[g.settings.sensitivity] : undefined,
+        poseDifficulty,
       })
       if (tick.events.beat) sfx.tick()
       if (tick.events.poseChange) sfx.release()
@@ -446,7 +480,27 @@ export default function App() {
             : undefined,
         traffic: mode === 'traffic' ? (a.modeState.red ? ('red' as const) : ('green' as const)) : undefined,
         poseTarget: tick.pose?.target.arms,
-        poseMatch: tick.pose?.match,
+        poseArmMatch:
+          mode === 'pose' && tick.pose && poseDifficulty
+            ? ([
+                poseArmScores(
+                  frame.players[0].arms,
+                  frame.players[0].armsConfidence,
+                  tick.pose.target.id,
+                  poseDifficulty.toleranceDeg,
+                ),
+                poseArmScores(
+                  frame.players[1].arms,
+                  frame.players[1].armsConfidence,
+                  tick.pose.target.id,
+                  poseDifficulty.toleranceDeg,
+                ),
+              ] as [
+                { left: number | null; right: number | null },
+                { left: number | null; right: number | null },
+              ])
+            : undefined,
+        posePassThreshold: poseDifficulty?.passThreshold,
         coop: mode === 'boss' ? true : undefined,
         bossFlash: mode === 'boss' && frame.now < a.bossFlashUntil ? true : undefined,
         panelNames:
@@ -613,6 +667,7 @@ export default function App() {
       names: playerNames(game.settings),
       mask: game.settings.maskMode,
       drawOverlays: ARENA_PHASES.includes(game.phase),
+      showSkeleton: game.settings.matchMode === 'pose',
       scoring: game.phase === 'PLAYING',
       // From the countdown on, roles stick to the tracked bodies — kids can
       // cross sides mid-match without swapping who is blue and who is red.

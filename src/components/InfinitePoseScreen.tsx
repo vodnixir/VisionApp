@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
 import { runCountdown } from '../countdown'
-import { drawPoseTarget } from '../cv/draw'
+import { DEFAULT_HUD, drawPoseTarget } from '../cv/draw'
 import type { EngineFrame } from '../cv/engine'
-import type { RawPosture } from '../cv/tracking'
+import { armsReady, type RawPosture } from '../cv/tracking'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { useI18n } from '../i18n'
-import { nextInfinitePoseId, poseConfidenceOk, poseSimilarity, poseTargetFor, type PoseId } from '../modes'
+import {
+  nextInfinitePoseId,
+  poseArmScores,
+  poseConfidenceOk,
+  poseSimilarity,
+  poseTargetFor,
+  type PoseId,
+} from '../modes'
 import { InstructionCard, type Rule } from './InstructionCard'
 import { PoseStickFigure } from './PoseStickFigure'
 
@@ -17,21 +24,22 @@ type Phase = 'idle' | 'calibrate' | 'countdown' | 'play' | 'over'
 const LOCK_DURATION_MS = 1500
 /** The calibration overlay must never be able to hang indefinitely. */
 const CALIBRATION_TIMEOUT_MS = 8000
+/** Lives a run starts with — a miss costs one, not the whole run. */
+const START_LIVES = 3
 
 /**
  * Outer pacing envelope: how long the player has to land the CURRENT pose
- * before it's a miss. The accuracy ramp (POSE_BANDS below — tighter
+ * before it's a miss. The accuracy ramp (poseBandFor below — tighter
  * tolerance, longer required continuous hold, higher threshold) already
  * carries Infinite Pose's difficulty curve; this window only exists so
  * standing still and never attempting a pose can't stall the run forever.
- * Same shrinking shape as before this rewrite.
  */
 const BASE_WINDOW_MS = 4000
 const MIN_WINDOW_MS = 1200
 const WINDOW_DECAY = 0.95
 
-function poseWindowMs(level: number): number {
-  return Math.max(MIN_WINDOW_MS, BASE_WINDOW_MS * Math.pow(WINDOW_DECAY, level))
+function poseWindowMs(attemptNumber: number): number {
+  return Math.max(MIN_WINDOW_MS, BASE_WINDOW_MS * Math.pow(WINDOW_DECAY, attemptNumber))
 }
 
 interface PoseBand {
@@ -40,7 +48,7 @@ interface PoseBand {
   passThreshold: number
 }
 
-/** Infinite Pose escalation table. attemptNumber is 1-indexed (landed count + 1) — pool expansion (Tier 2 from 6) lives in nextInfinitePoseId itself. */
+/** Infinite Pose escalation table. attemptNumber is 1-indexed (the "Level" shown on screen) — pool expansion (Tier 2 from 6) lives in nextInfinitePoseId itself. */
 function poseBandFor(attemptNumber: number): PoseBand {
   if (attemptNumber >= 21) return { toleranceDeg: 18, holdMs: 500, passThreshold: 0.8 }
   if (attemptNumber >= 13) return { toleranceDeg: 22, holdMs: 700, passThreshold: 0.72 }
@@ -85,11 +93,12 @@ function saveBest(level: number): void {
  * held — score at or above the current level's passThreshold, continuously,
  * for holdMs — before the outer per-pose window runs out. Landing it
  * advances the level, which tightens tolerance/threshold/hold and (from
- * level 6) opens the asymmetric Tier 2 pool. Reuses the pose-scoring
- * primitives in modes.ts (poseSimilarity / nextInfinitePoseId /
- * POSE_DEFINITIONS) and the same drawPoseTarget skeleton renderer
- * cv/draw.ts already exports — this screen only owns the escalating solo
- * loop around them. Reached at #pose.
+ * level 6) opens the asymmetric Tier 2 pool. A miss costs one of 3 lives
+ * instead of ending the run outright. Reuses the pose-scoring primitives in
+ * modes.ts (poseSimilarity / poseArmScores / nextInfinitePoseId /
+ * POSE_DEFINITIONS); the live per-limb correctness skeleton and the target
+ * figure are both drawn by the engine/cv-draw layer this screen configures.
+ * Reached at #pose.
  */
 export function InfinitePoseScreen() {
   const { t } = useI18n()
@@ -98,10 +107,12 @@ export function InfinitePoseScreen() {
   const [mirror, setMirror] = useState(true)
   const [count, setCount] = useState(3)
   const [presentCount, setPresentCount] = useState(0)
-  const [level, setLevel] = useState(0)
+  const [level, setLevel] = useState(1)
+  const [lives, setLives] = useState(START_LIVES)
   const [best, setBest] = useState(() => loadBest())
   const [isNewBest, setIsNewBest] = useState(false)
   const [hintText, setHintText] = useState<string | null>(null)
+  const [hintIcon, setHintIcon] = useState<string>('🙌')
   const [holdProgress, setHoldProgress] = useState(0)
   const [calibrationStalled, setCalibrationStalled] = useState(false)
   const wakeLock = useWakeLock()
@@ -112,7 +123,8 @@ export function InfinitePoseScreen() {
   const bandRef = useRef<PoseBand>(poseBandFor(1))
   const holdStartRef = useRef<number | null>(null)
   const windowStartRef = useRef(0)
-  const levelRef = useRef(0)
+  const attemptRef = useRef(1)
+  const livesRef = useRef(START_LIVES)
   const overlayRef = useRef<HTMLCanvasElement>(null)
 
   const onFrameRef = useRef<(frame: EngineFrame) => void>(() => {})
@@ -130,6 +142,7 @@ export function InfinitePoseScreen() {
       maxPlayers: 1,
       scoring: false,
       drawOverlays: true,
+      showSkeleton: true,
       rolesLocked: false,
       names: [t('runner.you')],
     })
@@ -167,7 +180,7 @@ export function InfinitePoseScreen() {
     [stop, wakeLock],
   )
 
-  const drawOverlay = (matchNow: number, poseId: PoseId) => {
+  const drawOverlay = (poseId: PoseId) => {
     const cv = overlayRef.current
     if (!cv) return
     if (cv.width !== cv.clientWidth || cv.height !== cv.clientHeight) {
@@ -178,16 +191,16 @@ export function InfinitePoseScreen() {
     if (!ctx) return
     ctx.clearRect(0, 0, cv.width, cv.height)
     const target = poseTargetFor(poseId)
-    drawPoseTarget(ctx, cv.width, cv.height, target.arms, [matchNow, matchNow])
+    drawPoseTarget(ctx, cv.width, cv.height, target.arms, mirror)
   }
 
-  /** Choose the next target pose and reset both the hold accumulator and the outer window. */
+  /** Choose the next target pose (at the CURRENT attempt number) and reset the hold accumulator + outer window. Does not itself change the attempt number — landing vs missing decide that. */
   const advancePose = (now: number) => {
-    const attemptNumber = levelRef.current + 1
-    currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptNumber, Math.random)
-    bandRef.current = poseBandFor(attemptNumber)
+    currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptRef.current, Math.random)
+    bandRef.current = poseBandFor(attemptRef.current)
     holdStartRef.current = null
     windowStartRef.current = now
+    drawOverlay(currentPoseIdRef.current)
   }
 
   onFrameRef.current = (frame: EngineFrame) => {
@@ -203,28 +216,40 @@ export function InfinitePoseScreen() {
         const calibrationElapsed = frame.now - (calibrationStartRef.current ?? frame.now)
 
         const posture = frame.players[0]?.posture ?? null
+        const ready = frame.presentCount >= 1 && armsReady(frame.players[0]?.skeleton)
         const fh = framingHint(posture, videoRef.current?.videoHeight ?? 0)
-        setHintText(fh ? t(`pose.hint.${fh}`) : null)
+        if (fh) {
+          setHintIcon(fh === 'stepBack' ? '⬅️' : '➡️')
+          setHintText(t(`pose.hint.${fh}`))
+        } else if (frame.presentCount >= 1 && !ready) {
+          setHintIcon('🙌')
+          setHintText(t('pose.hint.showArms'))
+        } else {
+          setHintText(null)
+        }
 
-        if (frame.presentCount >= 1) {
+        if (ready) {
           if (lockStartRef.current === null) {
             lockStartRef.current = frame.now
             sfx.lock()
-            console.log('[Calibration] Player detected — locking...')
+            console.log('[Calibration] Player + arms detected — locking...')
           } else if (frame.now - lockStartRef.current >= LOCK_DURATION_MS) {
             console.log('[Calibration] Solo Pose calibrated successfully, transitioning to game loop.')
             setPhase('countdown')
           }
         } else {
           if (lockStartRef.current !== null) {
-            console.log('[Calibration] Player lost frame — lock reset.')
+            console.log('[Calibration] Player or arms lost — lock reset.')
           }
           lockStartRef.current = null
         }
 
         // Safety net: the overlay must never be able to hang indefinitely.
+        // Only auto-proceed once actually ready — auto-starting into a
+        // framing where arms aren't visible would just reproduce the bug
+        // this gate exists to prevent.
         if (calibrationElapsed >= CALIBRATION_TIMEOUT_MS) {
-          if (frame.presentCount >= 1) {
+          if (ready) {
             console.warn('[Calibration] Timed out waiting for a stable lock — proceeding anyway.')
             setPhase('countdown')
           } else {
@@ -244,8 +269,10 @@ export function InfinitePoseScreen() {
 
         const fh = framingHint(posture, videoRef.current?.videoHeight ?? 0)
         if (fh) {
+          setHintIcon(fh === 'stepBack' ? '⬅️' : '➡️')
           setHintText(t(`pose.hint.${fh}`))
         } else if (!poseConfidenceOk(confidence)) {
+          setHintIcon('🙌')
           setHintText(t('pose.hint.showArms'))
         } else {
           setHintText(null)
@@ -253,17 +280,24 @@ export function InfinitePoseScreen() {
 
         const band = bandRef.current
         const match = poseSimilarity(pose, confidence, poseId, band.toleranceDeg)
-        drawOverlay(match, poseId)
+        const armScores = poseArmScores(pose, confidence, poseId, band.toleranceDeg)
+        configure({
+          hud: {
+            ...DEFAULT_HUD,
+            poseArmMatch: [armScores, { left: null, right: null }],
+            posePassThreshold: band.passThreshold,
+          },
+        })
 
         if (match >= band.passThreshold) {
           if (holdStartRef.current === null) holdStartRef.current = frame.now
           const held = frame.now - (holdStartRef.current ?? frame.now)
           setHoldProgress(Math.min(1, held / band.holdMs))
           if (held >= band.holdMs) {
-            // Landed it — level up, next pose is faster and stricter.
-            levelRef.current += 1
-            setLevel(levelRef.current)
+            // Landed it — next attempt is faster and stricter.
             sfx.tick()
+            attemptRef.current += 1
+            setLevel(attemptRef.current)
             advancePose(frame.now)
             setHoldProgress(0)
             return
@@ -273,9 +307,18 @@ export function InfinitePoseScreen() {
           setHoldProgress(0)
         }
 
-        const window = poseWindowMs(levelRef.current)
+        const window = poseWindowMs(attemptRef.current)
         if (frame.now - windowStartRef.current >= window) {
-          finish()
+          // Missed this pose — costs a life, but the run continues at the
+          // same difficulty (a new pose, not a harder one) until lives run out.
+          livesRef.current -= 1
+          setLives(livesRef.current)
+          if (livesRef.current <= 0) {
+            finish()
+          } else {
+            sfx.alert()
+            advancePose(frame.now)
+          }
         }
       }
     } catch (err) {
@@ -284,19 +327,28 @@ export function InfinitePoseScreen() {
   }
 
   const startPlay = () => {
-    levelRef.current = 0
-    setLevel(0)
-    currentPoseIdRef.current = null
-    advancePose(performance.now())
+    attemptRef.current = 1
+    setLevel(1)
+    livesRef.current = START_LIVES
+    setLives(START_LIVES)
+    // The very first pose of every run is always the easiest, most
+    // recognizable one (arms level out to the sides) at the most forgiving
+    // band, so a brand-new player gets an early success and can confirm the
+    // system is actually responding to them before anything harder shows up.
+    currentPoseIdRef.current = 't_pose'
+    bandRef.current = poseBandFor(1)
+    holdStartRef.current = null
+    windowStartRef.current = performance.now()
     setIsNewBest(false)
     setHoldProgress(0)
+    drawOverlay('t_pose')
     console.log('[Calibration] Countdown complete — entering the pose game loop.')
     setPhase('play')
   }
 
   const finish = () => {
     sfx.whistle()
-    const finalLevel = levelRef.current
+    const finalLevel = attemptRef.current
     if (finalLevel > best) {
       setBest(finalLevel)
       saveBest(finalLevel)
@@ -317,6 +369,9 @@ export function InfinitePoseScreen() {
     calibrationStartRef.current = null
     setCalibrationStalled(false)
     setHintText(null)
+    // Clear any correctness colors left over from the previous run so the
+    // live skeleton reads neutral again during the next calibration.
+    configure({ hud: { ...DEFAULT_HUD } })
     setPhase(presentCount >= 1 ? 'countdown' : 'calibrate')
   }
 
@@ -347,20 +402,35 @@ export function InfinitePoseScreen() {
 
       {showWorld && (
         <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex flex-col items-center gap-2">
-          <div className="flex items-center gap-4 rounded-full bg-black/60 px-6 py-2 backdrop-blur">
-            <span className="text-xs font-semibold uppercase tracking-wider text-white/60">
-              {t('pose.level')}
+          <div className="flex items-center gap-5 rounded-full bg-black/70 px-6 py-2 backdrop-blur">
+            <span className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-white/60">
+                {t('pose.level')}
+              </span>
+              <span className="text-3xl font-black tabular-nums">{level}</span>
             </span>
-            <span className="text-2xl font-black tabular-nums">{level}</span>
+            <span className="flex gap-1">
+              {Array.from({ length: START_LIVES }).map((_, i) => (
+                <span
+                  key={i}
+                  className={`text-3xl transition-all duration-300 ${
+                    i < lives ? 'scale-100 opacity-100' : 'scale-75 opacity-25 grayscale'
+                  }`}
+                >
+                  ❤️
+                </span>
+              ))}
+            </span>
           </div>
           {phase === 'play' && holdProgress > 0 && (
-            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/20">
+            <div className="h-2 w-40 overflow-hidden rounded-full bg-white/20">
               <div className="h-full rounded-full bg-lime-400" style={{ width: `${holdProgress * 100}%` }} />
             </div>
           )}
           {phase === 'play' && hintText && (
-            <div className="rounded-full bg-black/60 px-4 py-1 text-xs font-semibold text-white/85 backdrop-blur">
-              {hintText}
+            <div className="flex items-center gap-2 rounded-full bg-black/75 px-5 py-2 backdrop-blur">
+              <span className="text-2xl">{hintIcon}</span>
+              <span className="text-lg font-black text-white">{hintText}</span>
             </div>
           )}
         </div>
@@ -427,7 +497,8 @@ export function InfinitePoseScreen() {
                 {presentCount >= 1 ? t('pose.ready') : t('pose.stepIn')}
               </div>
               {hintText && (
-                <div className="rounded-full bg-black/70 px-5 py-2 text-sm font-semibold text-white/80">
+                <div className="flex items-center gap-2 rounded-full bg-black/70 px-5 py-3 text-base font-bold text-white">
+                  <span className="text-2xl">{hintIcon}</span>
                   {hintText}
                 </div>
               )}
@@ -435,7 +506,8 @@ export function InfinitePoseScreen() {
           )}
           {status === 'running' && phase === 'calibrate' && calibrationStalled && (
             <div className="flex flex-col items-center gap-3">
-              <div className="max-w-sm rounded-xl bg-black/70 px-5 py-3 text-center text-sm font-semibold text-white/85">
+              <div className="flex max-w-sm items-center gap-2 rounded-xl bg-black/70 px-5 py-3 text-center text-base font-bold text-white">
+                <span className="text-2xl">{hintIcon}</span>
                 {hintText ?? t('pose.stepIn')}
               </div>
               <button

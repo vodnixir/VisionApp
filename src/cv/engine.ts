@@ -21,6 +21,7 @@ import {
   type Candidate,
   type ColorSig,
   type RawPosture,
+  type Skeleton,
 } from './tracking'
 import {
   drawBrackets,
@@ -28,6 +29,7 @@ import {
   drawFaceMask,
   drawLabel,
   drawMatchHud,
+  drawSkeleton,
   drawVictorySplash,
   type HudState,
 } from './draw'
@@ -47,6 +49,8 @@ export interface EngineConfig {
   scoring: boolean
   /** Draw brackets + labels on the canvas. */
   drawOverlays: boolean
+  /** Draw the live per-joint skeleton overlay (Copy Pose legibility) — dots/lines on the player's own body, colored per-arm via hud.poseArmMatch. */
+  showSkeleton?: boolean
   /**
    * false → roles follow screen position (left = P1) — calibration behavior.
    * true → roles stick to the tracked bodies even when players cross sides.
@@ -138,6 +142,8 @@ export interface EnginePlayerFrame {
   arms: ArmPose | null
   /** Per-side raw confidence backing `arms` — pose-scoring's stricter gate. */
   armsConfidence: { left: number; right: number }
+  /** Raw joint positions for the live skeleton overlay / framing checks (null per-joint when unconfident). */
+  skeleton: Skeleton
 }
 
 export interface EngineFrame {
@@ -563,6 +569,7 @@ export class PoseEngine {
         posture: t.posture,
         arms: t.arms,
         armsConfidence: t.armsConfidence,
+        skeleton: t.skeleton,
       }))
 
       this.onFrame({
@@ -816,6 +823,19 @@ export class PoseEngine {
       const color = slotColor(i)
       drawBrackets(ctx, bbox, color, { alpha, speed: tracker.speed })
       drawLabel(ctx, config.names[i] ?? '', bbox, color, alpha, vw)
+      // Only while freshly tracked THIS frame — a skeleton frozen from a stale
+      // persisted detection would sit offset from wherever the player moved
+      // to, which is worse than showing nothing.
+      if (config.showSkeleton && tracker.visible) {
+        drawSkeleton(
+          ctx,
+          tracker.skeleton,
+          vw,
+          config.mirror,
+          config.hud.poseArmMatch?.[i] ?? null,
+          config.hud.posePassThreshold ?? 0.6,
+        )
+      }
       if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
         drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
       }
@@ -828,7 +848,7 @@ export class PoseEngine {
     })
 
     if (config.hud.mode === 'match') {
-      drawMatchHud(ctx, vw, vh, config.hud, [config.names[0] ?? '', config.names[1] ?? ''])
+      drawMatchHud(ctx, vw, vh, config.hud, [config.names[0] ?? '', config.names[1] ?? ''], config.mirror)
     }
     else if (config.hud.mode === 'victory') drawVictorySplash(ctx, vw, vh, config.hud)
 
