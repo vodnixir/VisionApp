@@ -572,13 +572,27 @@ export class PoseEngine {
         skeleton: t.skeleton,
       }))
 
-      this.onFrame({
-        now,
-        dt,
-        presentCount: players.filter((p) => p.present).length,
-        players,
-        hints: this.computeHints(vh),
-      })
+      // Every mode's onFrame handler runs with no safety net upstream of this
+      // point — an uncaught throw in ANY of them (a bad index, a null field)
+      // would otherwise unwind this whole async loop and silently kill
+      // inference for good: no more frames, ever, with nothing visible to
+      // the player except a frozen game. Surface it as a fatal error instead
+      // (same visible-message-plus-retry path a camera-boot failure uses)
+      // so this failure mode is structurally impossible, for every screen
+      // that uses this engine, in one place.
+      try {
+        this.onFrame({
+          now,
+          dt,
+          presentCount: players.filter((p) => p.present).length,
+          players,
+          hints: this.computeHints(vh),
+        })
+      } catch (err) {
+        console.error('[Engine] onFrame handler threw — stopping inference and surfacing a fatal error:', err)
+        this.fatal('Something went wrong processing this frame. Go back and try again.')
+        return
+      }
     }
   }
 
@@ -811,48 +825,61 @@ export class PoseEngine {
       return
     }
 
-    const nowMs = performance.now()
-    this.trackers.forEach((tracker, i) => {
-      if (!tracker.present || !tracker.bbox) return
-      let bbox = tracker.bbox
-      if (config.mirror) bbox = { ...bbox, x: vw - bbox.x - bbox.w }
-      // Fade the bracket while the track lives on persistence alone.
-      const alpha = tracker.visible
-        ? 1
-        : Math.max(0.3, 1 - ((nowMs - tracker.lastSeenAtMs) / PERSISTENCE_MS) * 0.7)
-      const color = slotColor(i)
-      drawBrackets(ctx, bbox, color, { alpha, speed: tracker.speed })
-      drawLabel(ctx, config.names[i] ?? '', bbox, color, alpha, vw)
-      // Only while freshly tracked THIS frame — a skeleton frozen from a stale
-      // persisted detection would sit offset from wherever the player moved
-      // to, which is worse than showing nothing.
-      if (config.showSkeleton && tracker.visible) {
-        drawSkeleton(
-          ctx,
-          tracker.skeleton,
-          vw,
-          config.mirror,
-          config.hud.poseArmMatch?.[i] ?? null,
-          config.hud.posePassThreshold ?? 0.6,
-        )
-      }
-      if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
-        drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
-      }
-      if (config.mask && tracker.face) {
-        const face = config.mirror
-          ? { ...tracker.face, x: vw - tracker.face.x }
-          : tracker.face
-        drawFaceMask(ctx, face, color, Math.max(alpha, 0.9))
-      }
-    })
+    // Overlay drawing (brackets, skeleton, HUD) is best-effort: the video
+    // frame is already on the canvas above, so a throw in here must degrade
+    // to a missing overlay for one frame, never take the video down with it.
+    // Nothing here sets React state or touches the inference loop, so a
+    // repeated failure just means a persistently plain video feed instead of
+    // a crashed render loop (drawImage above already ran, and the next
+    // rAF tick always gets scheduled by the caller regardless of this catch).
+    try {
+      const nowMs = performance.now()
+      this.trackers.forEach((tracker, i) => {
+        if (!tracker.present || !tracker.bbox) return
+        let bbox = tracker.bbox
+        if (config.mirror) bbox = { ...bbox, x: vw - bbox.x - bbox.w }
+        // Fade the bracket while the track lives on persistence alone.
+        const alpha = tracker.visible
+          ? 1
+          : Math.max(0.3, 1 - ((nowMs - tracker.lastSeenAtMs) / PERSISTENCE_MS) * 0.7)
+        const color = slotColor(i)
+        drawBrackets(ctx, bbox, color, { alpha, speed: tracker.speed })
+        drawLabel(ctx, config.names[i] ?? '', bbox, color, alpha, vw)
+        // Only while freshly tracked THIS frame — a skeleton frozen from a stale
+        // persisted detection would sit offset from wherever the player moved
+        // to, which is worse than showing nothing.
+        if (config.showSkeleton && tracker.visible) {
+          drawSkeleton(
+            ctx,
+            tracker.skeleton,
+            vw,
+            config.mirror,
+            config.hud.poseArmMatch?.[i] ?? null,
+            config.hud.posePassThreshold ?? 0.6,
+          )
+        }
+        if (config.hud.mode === 'match' && config.hud.combo[i] > 1) {
+          drawComboTag(ctx, bbox, config.hud.combo[i], alpha)
+        }
+        if (config.mask && tracker.face) {
+          const face = config.mirror
+            ? { ...tracker.face, x: vw - tracker.face.x }
+            : tracker.face
+          drawFaceMask(ctx, face, color, Math.max(alpha, 0.9))
+        }
+      })
 
-    if (config.hud.mode === 'match') {
-      drawMatchHud(ctx, vw, vh, config.hud, [config.names[0] ?? '', config.names[1] ?? ''], config.mirror)
+      if (config.hud.mode === 'match') {
+        drawMatchHud(ctx, vw, vh, config.hud, [config.names[0] ?? '', config.names[1] ?? ''], config.mirror)
+      } else if (config.hud.mode === 'victory') {
+        drawVictorySplash(ctx, vw, vh, config.hud)
+      }
+    } catch (err) {
+      console.error('[Engine] Overlay drawing failed — video keeps running, overlay skipped this frame:', err)
     }
-    else if (config.hud.mode === 'victory') drawVictorySplash(ctx, vw, vh, config.hud)
 
-    // Hitmarkers on top of the HUD so a fast strike always reads.
+    // Hitmarkers on top of the HUD so a fast strike always reads. Outside the
+    // try above so a broken overlay never also stops hitmarkers from fading.
     this.drawParticles(ctx)
   }
 

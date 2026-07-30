@@ -547,8 +547,14 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
             </div>
           )}
           {status === 'error' && error && (
-            <div className="max-w-sm rounded-xl bg-red-600/85 px-5 py-3 text-center text-sm font-semibold">
-              {error}
+            <div className="flex max-w-sm flex-col items-center gap-3">
+              <div className="rounded-xl bg-red-600/85 px-5 py-3 text-center text-sm font-semibold">{error}</div>
+              <button
+                onClick={() => void start()}
+                className="rounded-full bg-lime-400 px-6 py-3 text-sm font-black text-black"
+              >
+                {t('runner.again')}
+              </button>
             </div>
           )}
         </div>

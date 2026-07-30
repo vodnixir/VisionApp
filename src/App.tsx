@@ -982,6 +982,7 @@ export default function App() {
         <ErrorOverlay
           message={error}
           onBack={() => leaveArena(pendingBracket ? 'TOURNAMENT' : 'MATCH_SETUP')}
+          onRetry={() => void start()}
         />
       )}
     </div>

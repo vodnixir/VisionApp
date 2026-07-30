@@ -6,6 +6,15 @@ import type { EngineConfig, EngineFrame, PoseEngine } from '../cv/engine'
 
 export type EngineStatus = 'idle' | 'starting' | 'running' | 'error'
 
+/**
+ * Hard ceiling on how long "starting" may show. Camera permission prompts,
+ * GPU backend probing and model loading are all normally well under this —
+ * if it's not done by here, something is stuck, and a silent infinite
+ * loading screen is worse than a wrong-but-visible error the player can act
+ * on (retry, or go check camera permissions).
+ */
+const CAMERA_START_TIMEOUT_MS = 10000
+
 /** Fire-and-forget warm-up of the engine chunk while the user reads the menu. */
 export function prefetchEngine(): void {
   const idle =
@@ -91,7 +100,18 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
     )
     engineRef.current = engine
     try {
-      await engine.start(cameraId)
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Camera took too long to start. Check camera permissions and try again.')),
+          CAMERA_START_TIMEOUT_MS,
+        )
+      })
+      try {
+        await Promise.race([engine.start(cameraId), timeout])
+      } finally {
+        clearTimeout(timeoutId)
+      }
       if (engineRef.current !== engine) {
         console.warn('[Camera] Engine destroyed while booting — discarding this start() result.')
         return

@@ -12,20 +12,40 @@ export function LoadingOverlay() {
   )
 }
 
-export function ErrorOverlay({ message, onBack }: { message: string; onBack: () => void }) {
+export function ErrorOverlay({
+  message,
+  onBack,
+  onRetry,
+}: {
+  message: string
+  onBack: () => void
+  /** Optional same-screen retry (re-attempt the failed action) shown alongside Back. */
+  onRetry?: () => void
+}) {
   const { t } = useI18n()
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-page px-6 py-6 text-center landscape:gap-2">
       <TriangleAlert className="size-12 text-danger sm:size-16 landscape:size-8" aria-hidden />
       <p className="text-base font-semibold text-t1 sm:text-xl">{t('err.title')}</p>
       <p className="max-w-md text-sm leading-relaxed text-t2">{message}</p>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-2 rounded-xl border border-edge bg-card px-8 py-3 font-semibold text-t2 transition-all hover:border-edge2"
-      >
-        {t('err.back')}
-      </button>
+      <div className="mt-2 flex gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-xl border border-edge bg-card px-8 py-3 font-semibold text-t2 transition-all hover:border-edge2"
+        >
+          {t('err.back')}
+        </button>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="rounded-xl bg-accent px-8 py-3 font-black text-on-accent transition-all"
+          >
+            {t('runner.again')}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
