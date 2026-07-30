@@ -561,70 +561,11 @@ body,
   }
 }
 
-/* Variant B (scoreboard): two competing fill bars, out of sync with each
-   other so the screen reads as "a match already in progress" rather than a
-   uniform pulse. */
-.welcome-vs-fill {
-  position: absolute;
-  inset: 0 0 0 0;
-  transform-origin: bottom;
-  animation: welcome-vs-fill-a 3.4s ease-in-out infinite;
-}
-.welcome-vs-fill-a {
-  background: linear-gradient(180deg, rgba(57, 255, 136, 0.85), rgba(57, 255, 136, 0.35));
-  animation-name: welcome-vs-fill-a;
-}
-.welcome-vs-fill-b {
-  background: linear-gradient(180deg, rgba(255, 46, 99, 0.85), rgba(255, 46, 99, 0.35));
-  animation-name: welcome-vs-fill-b;
-  animation-delay: -1.6s;
-}
-@keyframes welcome-vs-fill-a {
-  0%,
-  100% {
-    transform: scaleY(0.38);
-  }
-  45% {
-    transform: scaleY(0.94);
-  }
-  70% {
-    transform: scaleY(0.62);
-  }
-}
-@keyframes welcome-vs-fill-b {
-  0%,
-  100% {
-    transform: scaleY(0.5);
-  }
-  40% {
-    transform: scaleY(0.7);
-  }
-  75% {
-    transform: scaleY(0.98);
-  }
-}
-
-/* Variant C (pictogram): a slow breathing glow behind the big figure. */
-@keyframes welcome-pictogram-pulse {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 18px currentColor) drop-shadow(0 0 46px currentColor);
-  }
-  50% {
-    filter: drop-shadow(0 0 30px currentColor) drop-shadow(0 0 70px currentColor);
-  }
-}
-.welcome-pictogram-figure {
-  animation: welcome-pictogram-pulse 2.6s ease-in-out infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .welcome-glow-a,
   .welcome-glow-b,
   .welcome-rays,
-  .welcome-play,
-  .welcome-vs-fill,
-  .welcome-pictogram-figure {
+  .welcome-play {
     animation: none;
   }
 }
