@@ -217,6 +217,17 @@ export const POSE_LIBRARY: PoseTarget[] = POSE_IDS.map((id) => {
   return { id, arms: [limbFromSpec(def.left, 1), limbFromSpec(def.right, -1)] } as PoseTarget
 })
 
+// Fail loudly at load time if the pool is ever accidentally truncated (a bad
+// merge, a partial edit) instead of silently shipping fewer poses than
+// POSE_IDS declares — this exact failure mode (correct code, unreachable/
+// truncated at runtime) is what let a prior pose-library change ship without
+// actually changing what players see.
+if (POSE_LIBRARY.length !== POSE_IDS.length || POSE_IDS.some((id) => !POSE_DEFINITIONS[id])) {
+  throw new Error(
+    `Pose library corrupted: POSE_IDS has ${POSE_IDS.length} entries but POSE_LIBRARY built ${POSE_LIBRARY.length}.`,
+  )
+}
+
 const POSE_LIBRARY_BY_ID: Record<PoseId, PoseTarget> = Object.fromEntries(
   POSE_LIBRARY.map((t) => [t.id, t]),
 ) as Record<PoseId, PoseTarget>

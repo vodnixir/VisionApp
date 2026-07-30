@@ -13,6 +13,7 @@ import {
   POSE_IDS,
   POSE_PERIOD_MS,
   POSE_SCORE_MIN_SCORE,
+  POSE_TIER2_UNLOCK_LEVEL,
   RHYTHM_PERIOD_MS,
   RHYTHM_WINDOW_MS,
   TRAFFIC_GREEN_MIN_MS,
@@ -21,9 +22,12 @@ import {
   bossCharge,
   createModeState,
   modeTick,
+  nextInfinitePoseId,
+  nextPoseIndex,
   poseSimilarity,
   poseTargetFor,
   specDeg,
+  type PoseId,
 } from '../src/modes'
 import type { ArmPose, Limb } from '../src/cv/tracking'
 import {
@@ -683,6 +687,52 @@ ok('pose library: every pair is separated by >=35° on some spec angle under the
       }
     }
   }
+})
+
+// These two tests call the exact selector functions the running game calls
+// (nextInfinitePoseId / nextPoseIndex) — not POSE_DEFINITIONS or POSE_LIBRARY
+// directly. A pool that's correct in the data but never actually reached at
+// runtime (a truncated slice, a stuck level, a selector that got swapped for
+// an old one) would pass every test that imports the definitions directly
+// while still shipping "nothing changed" — this is the failure mode that
+// slipped through before, so it gets its own dedicated coverage.
+ok('nextInfinitePoseId (the real Infinite Pose selector) reaches every pose, tier-gated by level', () => {
+  const rng = mulberry32(12345)
+  const tier1Ids = POSE_IDS.filter((id) => POSE_DEFINITIONS[id].tier === 1)
+
+  // Below the unlock level, only Tier 1 ids may ever appear.
+  const belowUnlock = new Set<PoseId>()
+  let prev: PoseId | null = null
+  for (let i = 0; i < 500; i++) {
+    prev = nextInfinitePoseId(prev, 1, rng)
+    belowUnlock.add(prev)
+  }
+  for (const id of belowUnlock) {
+    assert.equal(POSE_DEFINITIONS[id].tier, 1, `${id} is Tier 2 but appeared before level ${POSE_TIER2_UNLOCK_LEVEL}`)
+  }
+  assert.equal(belowUnlock.size, tier1Ids.length, 'every Tier 1 pose is reachable before the unlock level')
+
+  // At/above the unlock level, every one of the 13 poses must eventually turn up.
+  const seen = new Set<PoseId>()
+  prev = null
+  for (let i = 0; i < 3000; i++) {
+    prev = nextInfinitePoseId(prev, POSE_TIER2_UNLOCK_LEVEL + 20, rng)
+    seen.add(prev)
+  }
+  for (const id of POSE_IDS) {
+    assert.ok(seen.has(id), `${id} was never selected by nextInfinitePoseId — the pool is truncated at runtime`)
+  }
+})
+
+ok('nextPoseIndex (the real 2P duel selector) reaches every pose', () => {
+  const rng = mulberry32(777)
+  const seen = new Set<PoseId>()
+  let idx = 0
+  for (let i = 0; i < 3000; i++) {
+    idx = nextPoseIndex(idx, rng)
+    seen.add(POSE_IDS[idx])
+  }
+  assert.equal(seen.size, POSE_IDS.length, `the 2P duel only ever reached ${seen.size}/${POSE_IDS.length} poses`)
 })
 
 ok('pose mode: only a good, confident copy fills, and the target rotates on schedule', () => {
