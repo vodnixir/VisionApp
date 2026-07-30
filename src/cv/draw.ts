@@ -68,7 +68,10 @@ export function drawBrackets(
   const th = canvasTheme()
   const { x, y, w, h } = bbox
   const len = Math.max(18, Math.min(w, h) * 0.24)
-  const lw = Math.max(3, Math.min(w, h) * 0.02)
+  // Bold enough to read at a 3m+ viewing distance — this bracket is the
+  // primary visible proof that identity tracking is doing the right thing,
+  // so it must never be too thin to notice a colour on the wrong body.
+  const lw = Math.max(6, Math.min(w, h) * 0.035)
 
   ctx.save()
   ctx.globalAlpha = options.alpha

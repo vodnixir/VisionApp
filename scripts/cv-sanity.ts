@@ -51,6 +51,7 @@ import {
 import {
   AMPLITUDE_MAX_BONUS,
   AMPLITUDE_MICRO_FACTOR,
+  IDENTITY_REBIND_HOLD_MS,
   REBIND_WINDOW_MS,
   amplitudeFactor,
   assignRolesN,
@@ -58,15 +59,21 @@ import {
   computeRoi,
   iou,
   matchLockedRoles,
+  matchLockedRolesN,
   motionDelta,
+  pickRoster,
   roiTouchesEdge,
+  selectFighters,
   sigDistance,
+  torsoAnchor,
   type BBox,
   type Candidate,
   type ColorSig,
   type KpMap,
+  type RosterAnchor,
   type SlotAnchor,
 } from '../src/cv/tracking'
+import type { Pose } from '@tensorflow-models/pose-detection'
 import {
   DEFAULT_GESTURE_CONFIG,
   averageNeutral,
@@ -1054,6 +1061,335 @@ await okAsync('packSignal/unpackSignal round-trips offers and answers; junk is r
     assert.deepEqual(back.sdp, payload.sdp, 'the SDP survives the round-trip byte-for-byte')
   }
   await assert.rejects(() => unpackSignal('definitely-not-a-connection-code'))
+})
+
+console.log('player identity (2p/3p/4p sticky tracking)')
+
+const MOVENET_KEYPOINT_NAMES = [
+  'nose',
+  'left_eye',
+  'right_eye',
+  'left_ear',
+  'right_ear',
+  'left_shoulder',
+  'right_shoulder',
+  'left_elbow',
+  'right_elbow',
+  'left_wrist',
+  'right_wrist',
+  'left_hip',
+  'right_hip',
+  'left_knee',
+  'right_knee',
+  'left_ankle',
+  'right_ankle',
+] as const
+
+/** A fabricated MoveNet-shaped Pose (real keypoint names, all confident) for a body centered at (cx, cy) — shoulder-to-shoulder width ≈ `scale` px. */
+function fakePose(cx: number, cy: number, scale = 60): Pose {
+  const half = scale / 2
+  const positions: Record<string, [number, number]> = {
+    nose: [cx, cy - scale * 1.2],
+    left_eye: [cx + 6, cy - scale * 1.25],
+    right_eye: [cx - 6, cy - scale * 1.25],
+    left_ear: [cx + 12, cy - scale * 1.2],
+    right_ear: [cx - 12, cy - scale * 1.2],
+    left_shoulder: [cx + half, cy - scale * 0.7],
+    right_shoulder: [cx - half, cy - scale * 0.7],
+    left_elbow: [cx + half, cy - scale * 0.3],
+    right_elbow: [cx - half, cy - scale * 0.3],
+    left_wrist: [cx + half, cy],
+    right_wrist: [cx - half, cy],
+    left_hip: [cx + half * 0.8, cy + scale * 0.1],
+    right_hip: [cx - half * 0.8, cy + scale * 0.1],
+    left_knee: [cx + half * 0.8, cy + scale * 0.6],
+    right_knee: [cx - half * 0.8, cy + scale * 0.6],
+    left_ankle: [cx + half * 0.8, cy + scale * 1.1],
+    right_ankle: [cx - half * 0.8, cy + scale * 1.1],
+  }
+  const keypoints = MOVENET_KEYPOINT_NAMES.map((name) => {
+    const [x, y] = positions[name]
+    return { x, y, score: 0.9, name }
+  })
+  return { score: 0.9, keypoints }
+}
+
+/** poses -> real Candidate[] via the actual selectFighters the engine calls, not a hand-built Candidate. */
+function fakeCandidates(bodies: Array<{ x: number; y: number; scale?: number }>): Candidate[] {
+  const poses = bodies.map((b) => fakePose(b.x, b.y, b.scale ?? 60))
+  return selectFighters(poses, bodies.length)
+}
+
+function emptyRoster(): RosterAnchor {
+  return { bbox: null, lastBBox: null, lastSeenAtMs: -Infinity, sig: null, torso: null, lastTorso: null, boundSize: null }
+}
+
+/** Mimics what PlayerTracker.observe() records, for the one slot fields matchLockedRolesN actually reads. */
+function bindSlot(slot: RosterAnchor, cand: Candidate, nowMs: number, lockSize = false): void {
+  const t = torsoAnchor(cand.pose, cand.bbox)
+  if (!t) throw new Error('test fixture: candidate has no usable torso')
+  slot.bbox = cand.bbox
+  slot.lastBBox = cand.bbox
+  slot.torso = { x: t.x, y: t.y }
+  slot.lastTorso = slot.torso
+  slot.lastSeenAtMs = nowMs
+  if (lockSize) slot.boundSize = t.size
+}
+
+/** Drive N frames of matchLockedRolesN — the actual function cv/engine.ts calls once roles lock — updating slots exactly like the engine would between calls. Returns the LAST frame's result. */
+function runFrames(
+  slots: RosterAnchor[],
+  frames: Candidate[][],
+  videoWidth: number,
+  mirror: boolean,
+  strictSideLock = false,
+): (Candidate | null)[] {
+  let last: (Candidate | null)[] = []
+  let t = 0
+  for (const cands of frames) {
+    t += 33 // ~30fps
+    last = matchLockedRolesN(slots, cands, t, videoWidth, mirror, strictSideLock)
+    last.forEach((c, i) => {
+      if (c) bindSlot(slots[i], c, t)
+    })
+  }
+  return last
+}
+
+ok('identity: two players who cross over keep their original slot (colour), not their side', () => {
+  const left0 = emptyRoster()
+  const right0 = emptyRoster()
+  const initial = fakeCandidates([
+    { x: 100, y: 300 },
+    { x: 700, y: 300 },
+  ])
+  bindSlot(left0, initial[0], 0, true) // slot 0 bound to the body starting on the left
+  bindSlot(right0, initial[1], 0, true) // slot 1 bound to the body starting on the right
+  const slots = [left0, right0]
+
+  // Walk them past each other over many small steps — real motion, not a
+  // teleport — left body's x rises from 100 to 700, right body's falls from
+  // 700 to 100.
+  const frames: Candidate[][] = []
+  const steps = 20
+  for (let i = 1; i <= steps; i++) {
+    const leftX = 100 + ((700 - 100) * i) / steps
+    const rightX = 700 - ((700 - 100) * i) / steps
+    frames.push(fakeCandidates([{ x: leftX, y: 300 }, { x: rightX, y: 300 }]))
+  }
+  const result = runFrames(slots, frames, VW, true)
+
+  assert.ok(result[0] !== null && result[1] !== null, 'both slots still bound after crossing')
+  // Slot 0 (originally the left body) must have followed that BODY, so it is
+  // now on the right of the screen — not "whichever body is currently on
+  // the left", which is what a purely-positional assignment would return.
+  const slot0X = torsoAnchor(result[0]!.pose, result[0]!.bbox)!.x
+  const slot1X = torsoAnchor(result[1]!.pose, result[1]!.bbox)!.x
+  assert.ok(slot0X > 600, 'slot 0 (originally left) followed its body to the right')
+  assert.ok(slot1X < 200, 'slot 1 (originally right) followed its body to the left')
+})
+
+ok('identity: a smaller background bystander never claims a slot', () => {
+  const s0 = emptyRoster()
+  const s1 = emptyRoster()
+  const initial = fakeCandidates([
+    { x: 200, y: 300, scale: 60 },
+    { x: 600, y: 300, scale: 60 },
+  ])
+  bindSlot(s0, initial[0], 0, true)
+  bindSlot(s1, initial[1], 0, true)
+  const slots = [s0, s1]
+
+  // A bystander appears between them, clearly smaller (further away) than
+  // the 60px reference the roster locked at round start.
+  const bystanderScale = 30 // 50% of 60 — below the 60% floor
+  const frame = fakeCandidates([
+    { x: 200, y: 300, scale: 60 },
+    { x: 400, y: 300, scale: bystanderScale },
+    { x: 600, y: 300, scale: 60 },
+  ])
+  const result = matchLockedRolesN(slots, frame, 1000, VW, true)
+  assert.ok(result[0] !== null && result[1] !== null, 'both real players still matched')
+  for (const r of result) {
+    const size = torsoAnchor(r!.pose, r!.bbox)!.size
+    assert.ok(size > 45, `slot bound to a real player (size ${size.toFixed(1)}), not the ${bystanderScale}px bystander`)
+  }
+})
+
+ok('identity: a player who briefly disappears regains the same slot', () => {
+  const s0 = emptyRoster()
+  const s1 = emptyRoster()
+  const initial = fakeCandidates([
+    { x: 200, y: 300 },
+    { x: 600, y: 300 },
+  ])
+  bindSlot(s0, initial[0], 0, true)
+  bindSlot(s1, initial[1], 0, true)
+  const slots = [s0, s1]
+
+  // Player 2 vanishes for a couple of frames (dropped detection).
+  const gone = matchLockedRolesN(slots, fakeCandidates([{ x: 205, y: 300 }]), 100, VW, true)
+  assert.ok(gone[0] !== null, 'player 1 keeps tracking through the gap')
+  assert.equal(gone[1], null, 'player 2 reads absent, not reassigned to someone else')
+  gone.forEach((c, i) => {
+    if (c) bindSlot(slots[i], c, 100)
+  })
+
+  // Player 2 reappears nearby, well within the rebind hold window.
+  assert.ok(IDENTITY_REBIND_HOLD_MS >= 500, 'hold window is long enough for this fixture to be meaningful')
+  const back = matchLockedRolesN(
+    slots,
+    fakeCandidates([
+      { x: 210, y: 300 },
+      { x: 610, y: 300 },
+    ]),
+    100 + IDENTITY_REBIND_HOLD_MS - 100,
+    VW,
+    true,
+  )
+  assert.ok(back[1] !== null, 'player 2 is rebound')
+  const x = torsoAnchor(back[1]!.pose, back[1]!.bbox)!.x
+  assert.ok(x > 500, 'rebound to slot 1 (their own slot), not slot 0')
+})
+
+ok('identity: two bound slots are never swapped with each other in one frame', () => {
+  // Pure position can't construct a genuine swap for 2 fixed anchors: with a
+  // symmetric distance metric, "both slots prefer the OTHER's candidate"
+  // never happens from position alone (the nearer candidate is always
+  // nearer, full stop) — that's WHY nearest-neighbour matching is swap-
+  // resistant by construction. The real trigger is the colour-signature
+  // term tipping an otherwise-close positional call: two candidates
+  // sitting between two close-together anchors, wearing each OTHER's
+  // remembered clothing colour.
+  const s0 = emptyRoster()
+  const s1 = emptyRoster()
+  s0.torso = { x: 100, y: 300 }
+  s0.lastTorso = s0.torso
+  s0.lastSeenAtMs = 0
+  s0.boundSize = 60
+  s0.sig = [1, 0]
+  s1.torso = { x: 300, y: 300 }
+  s1.lastTorso = s1.torso
+  s1.lastSeenAtMs = 0
+  s1.boundSize = 60
+  s1.sig = [0, 1]
+  const slots = [s0, s1]
+
+  const [candP, candQ] = fakeCandidates([
+    { x: 190, y: 300 }, // slightly closer to slot 0's anchor (100) than slot 1's (300)
+    { x: 210, y: 300 }, // slightly closer to slot 1's anchor (300) than slot 0's (100)
+  ])
+  // Colours crossed: P (near slot 0) is wearing slot 1's colour and vice
+  // versa — strong enough evidence for the cost function to prefer the
+  // cross pairing over the barely-better positional match.
+  candP.sig = [0, 1]
+  candQ.sig = [1, 0]
+
+  const result = matchLockedRolesN(slots, [candP, candQ], 33, VW, true)
+  assert.equal(result[0], null, 'slot 0 rejects the swap rather than confidently binding the wrong body')
+  assert.equal(result[1], null, 'slot 1 rejects the swap rather than confidently binding the wrong body')
+})
+
+ok('identity: crossing is preserved identically with mirror on and off', () => {
+  for (const mirror of [true, false]) {
+    const s0 = emptyRoster()
+    const s1 = emptyRoster()
+    const initial = fakeCandidates([
+      { x: 100, y: 300 },
+      { x: 700, y: 300 },
+    ])
+    bindSlot(s0, initial[0], 0, true)
+    bindSlot(s1, initial[1], 0, true)
+    const slots = [s0, s1]
+    const frames: Candidate[][] = []
+    for (let i = 1; i <= 20; i++) {
+      const leftX = 100 + ((700 - 100) * i) / 20
+      const rightX = 700 - ((700 - 100) * i) / 20
+      frames.push(fakeCandidates([{ x: leftX, y: 300 }, { x: rightX, y: 300 }]))
+    }
+    const result = runFrames(slots, frames, VW, mirror)
+    const slot0X = torsoAnchor(result[0]!.pose, result[0]!.bbox)!.x
+    // Raw camera-space matching (torso proximity) never reads config.mirror
+    // at all — it's a display-only concern applied elsewhere — so the same
+    // raw motion produces the same identity outcome either way.
+    assert.ok(slot0X > 600, `slot 0 followed its body regardless of mirror=${mirror}`)
+  }
+})
+
+for (const n of [2, 3, 4] as const) {
+  ok(`identity: ${n}p crossing behaves the same as 2p`, () => {
+    // n well-separated bodies; only the leftmost two (slot 0 and slot 1)
+    // cross paths, exactly like the 2p test, while any other slots (3p/4p)
+    // stay put at their own distinct spot — a realistic "two of the group
+    // swap places" moment, not every body converging on the same point at
+    // once (which is a much harder, separate collision scenario).
+    const slots = Array.from({ length: n }, () => emptyRoster())
+    const startX = Array.from({ length: n }, (_, i) => 120 + i * 220)
+    const initial = fakeCandidates(startX.map((x) => ({ x, y: 300 })))
+    initial.forEach((c, i) => bindSlot(slots[i], c, 0, true))
+
+    const frames: Candidate[][] = []
+    const steps = 20
+    for (let i = 1; i <= steps; i++) {
+      const xs = [...startX]
+      xs[0] = startX[0] + ((startX[1] - startX[0]) * i) / steps
+      xs[1] = startX[1] - ((startX[1] - startX[0]) * i) / steps
+      frames.push(fakeCandidates(xs.map((x) => ({ x, y: 300 }))))
+    }
+    const result = runFrames(slots, frames, VW, true)
+    result.forEach((c, i) => assert.ok(c !== null, `${n}p: slot ${i} still bound after the reshuffle`))
+    const slot0X = torsoAnchor(result[0]!.pose, result[0]!.bbox)!.x
+    const slot1X = torsoAnchor(result[1]!.pose, result[1]!.bbox)!.x
+    assert.ok(slot0X > startX[1] - 30, `${n}p: slot 0 followed its own body across`)
+    assert.ok(slot1X < startX[0] + 30, `${n}p: slot 1 followed its own body across`)
+    for (let i = 2; i < n; i++) {
+      const x = torsoAnchor(result[i]!.pose, result[i]!.bbox)!.x
+      assert.ok(Math.abs(x - startX[i]) < 30, `${n}p: uninvolved slot ${i} stayed on its own body`)
+    }
+  })
+}
+
+ok('identity: strictSideLock rejects a body that crossed into another slot\'s zone', () => {
+  const s0 = emptyRoster()
+  const s1 = emptyRoster()
+  const initial = fakeCandidates([
+    { x: 150, y: 300 },
+    { x: 650, y: 300 },
+  ])
+  bindSlot(s0, initial[0], 0, true)
+  bindSlot(s1, initial[1], 0, true)
+  const slots = [s0, s1]
+  // With strictSideLock on, a body that fully crosses into the OTHER half of
+  // the frame can never be matched to its original slot, by design.
+  const result = matchLockedRolesN(
+    slots,
+    fakeCandidates([
+      { x: 650, y: 300 },
+      { x: 150, y: 300 },
+    ]),
+    33,
+    VW,
+    true,
+    true, // strictSideLock
+  )
+  assert.equal(result[0], null, 'slot 0 (left zone) does not follow its body across the midline')
+  assert.equal(result[1], null, 'slot 1 (right zone) does not follow its body across the midline')
+})
+
+ok('pickRoster: largest, non-overlapping bodies, left-to-right', () => {
+  const bodies = fakeCandidates([
+    { x: 400, y: 300, scale: 40 }, // smallest — a bystander
+    { x: 600, y: 300, scale: 70 },
+    { x: 200, y: 300, scale: 70 },
+  ])
+  const roster = pickRoster(bodies, 2, VW, false) // mirror=false: raw x already IS display left-to-right
+  assert.equal(roster.length, 2, 'picks exactly the requested count')
+  const xs = roster.map((c) => c.anchorX)
+  assert.ok(xs[0] < xs[1], 'returned left-to-right')
+  for (const c of roster) {
+    const size = torsoAnchor(c.pose, c.bbox)!.size
+    assert.ok(size > 50, 'never picks the smaller bystander over a real player')
+  }
 })
 
 console.log(`\n${passed} checks passed`)

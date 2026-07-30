@@ -200,6 +200,9 @@ const en = {
   'layout.grid': 'Grid layout',
   'layout.hero': 'Focus layout',
 
+  'settings.strictSideLock': 'Side Lock',
+  'settings.strictSideLockHint': 'Each player stays on their own side of the screen — colours can never swap.',
+
   'runner.you': 'YOU',
   'runner.inFrame': 'Step fully into frame',
   'runner.title': '🏃 Metro Runner',
@@ -550,6 +553,9 @@ const ru: Dict = {
   'layout.grid': 'Сетка',
   'layout.hero': 'Акцент',
 
+  'settings.strictSideLock': 'Своя сторона',
+  'settings.strictSideLockHint': 'Каждый игрок остаётся на своей стороне экрана — цвета никогда не перепутаются.',
+
   'runner.you': 'ТЫ',
   'runner.inFrame': 'Встань в кадр целиком',
   'runner.title': '🏃 Бегун по метро',
@@ -897,6 +903,9 @@ const es: Dict = {
   'layout.grid': 'Cuadrícula',
   'layout.hero': 'Enfoque',
 
+  'settings.strictSideLock': 'Lado fijo',
+  'settings.strictSideLockHint': 'Cada jugador se queda en su lado de la pantalla — los colores nunca se confunden.',
+
   'runner.you': 'TÚ',
   'runner.inFrame': 'Ponte entero en cuadro',
   'runner.title': '🏃 Corredor del metro',
@@ -1243,6 +1252,9 @@ const pt: Dict = {
   'layout.stack': 'Lista',
   'layout.grid': 'Grade',
   'layout.hero': 'Foco',
+
+  'settings.strictSideLock': 'Lado fixo',
+  'settings.strictSideLockHint': 'Cada jogador fica do seu lado da tela — as cores nunca se confundem.',
 
   'runner.you': 'VOCÊ',
   'runner.inFrame': 'Fique inteiro no quadro',

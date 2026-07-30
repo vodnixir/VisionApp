@@ -22,6 +22,7 @@ import {
 import { useState } from 'react'
 import { music, useMusic } from '../audio/music'
 import { LANGS, useI18n } from '../i18n'
+import { useStrictSideLock } from '../identityLock'
 import { LAYOUT_IDS, useLayout, type LayoutId } from '../layout'
 import { isProMode } from '../pro'
 import { loadSession, sessionLeader } from '../session'
@@ -111,6 +112,7 @@ export function HomeScreen({
   const { t, lang, setLang } = useI18n()
   const { theme, setTheme } = useTheme()
   const { layout, setLayout } = useLayout()
+  const { strictSideLock, setStrictSideLock } = useStrictSideLock()
   const { musicEnabled, setMusicEnabled } = useMusic()
   const [profileCount] = useState(() => loadProfiles().length)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -395,6 +397,20 @@ export function HomeScreen({
                             />
                           ))}
                         </div>
+
+                        <div className="h-5 w-px bg-edge" />
+
+                        <button
+                          type="button"
+                          onClick={() => setStrictSideLock(!strictSideLock)}
+                          aria-pressed={strictSideLock}
+                          title={t('settings.strictSideLockHint')}
+                          className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                            strictSideLock ? 'border-sel bg-selbg text-sel' : 'border-edge text-t3 hover:text-t2'
+                          }`}
+                        >
+                          {t('settings.strictSideLock')}
+                        </button>
                       </div>
                     </div>
                   )}

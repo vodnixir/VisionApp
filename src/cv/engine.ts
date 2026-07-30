@@ -13,9 +13,11 @@ import {
   computeRoi,
   emaBBox,
   iou,
-  matchLockedRoles,
+  matchLockedRolesN,
+  pickRoster,
   roiTouchesEdge,
   selectFighters,
+  torsoAnchor,
   type ArmPose,
   type BBox,
   type Candidate,
@@ -56,6 +58,8 @@ export interface EngineConfig {
    * true → roles stick to the tracked bodies even when players cross sides.
    */
   rolesLocked: boolean
+  /** Optional extra guard (default off): each slot only accepts bodies from its own screen zone — see identityLock.ts. */
+  strictSideLock?: boolean
   /** Canvas HUD (bars / timer / victory) — part of the TV picture and the clip. */
   hud: HudState
   /** Privacy: draw robot masks over the players' faces (TV + clip). */
@@ -286,6 +290,8 @@ export class PoseEngine {
   private failureStreak = 0
   private fatalFired = false
 
+  /** False→true edge of config.rolesLocked triggers the one-time round-start roster pick. */
+  private rolesWereLocked = false
   private roi: BBox | null = null
   private roiWarmup = 0
   private sinceFullScan = 0
@@ -524,28 +530,59 @@ export class PoseEngine {
       while (this.trackers.length < maxPlayers) this.trackers.push(new PlayerTracker())
       while (this.trackers.length > maxPlayers) this.trackers.pop()?.reset()
 
-      const fighters = selectFighters(poses, maxPlayers)
-      // Colour signatures for the duel's identity matcher (keeps blue/red apart
-      // through a cross); the runner modes don't lock roles, so skip the cost.
-      if (maxPlayers === 2) this.sampleSignatures(fighters, vw, vh)
-      // Duel (2p) keeps its exact behaviour: sticky locked roles + positional
-      // calibration. Runner modes use plain left-to-right positional slots.
-      const roles: (Candidate | null)[] =
-        maxPlayers === 2
-          ? config.rolesLocked
-            ? matchLockedRoles(
-                [this.trackers[0], this.trackers[1]],
-                fighters,
-                now,
-                vw,
-                config.mirror,
-              )
-            : assignRoles(fighters, vw, config.mirror)
-          : assignRolesN(fighters, maxPlayers, vw, config.mirror)
+      // Once locked, keep a wider candidate pool alive than just "the top
+      // maxPlayers by current size" — a background bystander who happens to
+      // measure larger than a crouching/turned player for one frame must not
+      // crowd the real player out of consideration before the sticky matcher
+      // (which knows each slot's bound size, below) ever gets a look.
+      const fighters = selectFighters(poses, config.rolesLocked ? maxPlayers + 3 : maxPlayers)
+      // Colour signatures are the sticky matcher's anti-swap tie-breaker —
+      // sample them whenever identity persistence actually matters (locked),
+      // for any player count, not just the 2-player duel.
+      if (config.rolesLocked || maxPlayers === 2) this.sampleSignatures(fighters, vw, vh)
 
       for (const tracker of this.trackers) tracker.age(now)
+
+      let roles: (Candidate | null)[]
+      let justLockedRoster = false
+      if (config.rolesLocked && !this.rolesWereLocked) {
+        // Round just started: pick exactly maxPlayers bodies — largest, best
+        // separated — once. Nobody else is ever eligible for a slot for the
+        // rest of the round (matchLockedRolesN's size gate keys off the
+        // sizes bound below). If not everyone is found yet (a transient
+        // single-frame gap — calibration already confirmed presence before
+        // roles could lock), fall back to plain position for this frame only
+        // and retry the full pick next frame.
+        const roster = pickRoster(fighters, maxPlayers, vw, config.mirror)
+        if (roster.length === maxPlayers) {
+          roles = roster
+          this.rolesWereLocked = true
+          justLockedRoster = true
+        } else {
+          roles =
+            maxPlayers === 2
+              ? assignRoles(fighters, vw, config.mirror)
+              : assignRolesN(fighters, maxPlayers, vw, config.mirror)
+        }
+      } else {
+        if (!config.rolesLocked) this.rolesWereLocked = false
+        // Locked (sticky, identity-based) for any player count once bound;
+        // unlocked (plain screen position) is calibration's own behaviour.
+        roles = config.rolesLocked
+          ? matchLockedRolesN(this.trackers, fighters, now, vw, config.mirror, config.strictSideLock)
+          : maxPlayers === 2
+            ? assignRoles(fighters, vw, config.mirror)
+            : assignRolesN(fighters, maxPlayers, vw, config.mirror)
+      }
+
       roles.forEach((candidate, i) => {
-        if (candidate) this.trackers[i].observe(candidate, dt, config.scoring, now)
+        if (!candidate) return
+        const tracker = this.trackers[i]
+        if (!tracker) return
+        tracker.observe(candidate, dt, config.scoring, now)
+        if (justLockedRoster) {
+          tracker.boundSize = torsoAnchor(candidate.pose, candidate.bbox)?.size ?? tracker.boundSize
+        }
       })
       for (const tracker of this.trackers) {
         if (tracker.present && !tracker.visible) tracker.decay(dt)

@@ -16,6 +16,7 @@ import { TournamentScreen } from './components/TournamentScreen'
 import { DEFAULT_HUD } from './cv/draw'
 import type { EngineFrame, EngineHints } from './cv/engine'
 import { armsReady } from './cv/tracking'
+import { useStrictSideLock } from './identityLock'
 import { useGameState } from './hooks/useGameState'
 import { useWakeLock } from './hooks/useWakeLock'
 import { prefetchEngine, usePoseDetection } from './hooks/usePoseDetection'
@@ -231,6 +232,7 @@ export default function App() {
   const show = showRef.current
   const [castStatus, setCastStatus] = useState<CastStatus>('idle')
   const wakeLock = useWakeLock()
+  const { strictSideLock } = useStrictSideLock()
 
   const playerNames = useCallback(
     (s: GameSettings): [string, string] => [
@@ -675,9 +677,10 @@ export default function App() {
         game.phase === 'PLAYING' ||
         game.phase === 'GAME_OVER' ||
         (game.phase === 'CALIBRATION' && game.calibrationPhase === 'COUNTDOWN'),
+      strictSideLock,
     })
     sfx.enabled = game.settings.soundEnabled
-  }, [game.settings, game.phase, game.calibrationPhase, configure, playerNames])
+  }, [game.settings, game.phase, game.calibrationPhase, configure, playerNames, strictSideLock])
 
   // Fresh calibration → clean HUD (a rematch inherits the victory splash otherwise).
   useEffect(() => {

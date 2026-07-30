@@ -5,6 +5,7 @@ import type { EngineFrame } from '../cv/engine'
 import { usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { useI18n } from '../i18n'
+import { useStrictSideLock } from '../identityLock'
 import { playerColors } from '../theme'
 import { FILL_RATE, SENSITIVITY_FACTOR } from '../types'
 import { InstructionCard, type Rule } from './InstructionCard'
@@ -65,6 +66,7 @@ export function GroupMatchScreen() {
   const [presentCount, setPresentCount] = useState(0)
   const [result, setResult] = useState<Result | null>(null)
   const wakeLock = useWakeLock()
+  const { strictSideLock } = useStrictSideLock()
 
   const progressRef = useRef<number[]>([])
   const finishedRef = useRef(false)
@@ -84,10 +86,15 @@ export function GroupMatchScreen() {
       maxPlayers: playerCount,
       scoring: phase === 'play',
       drawOverlays: true,
-      rolesLocked: false,
+      // From the countdown on, roles stick to the tracked bodies — a
+      // background bystander or a player crossing paths can no longer steal
+      // or swap a colour mid-round (same rule the 2-player duel already
+      // uses, generalized to 3/4p by the engine's identity matcher).
+      rolesLocked: phase === 'countdown' || phase === 'play' || phase === 'over',
+      strictSideLock,
       names: Array.from({ length: playerCount }, (_, i) => t('runner.pLabel', { n: i + 1 })),
     })
-  }, [mirror, playerCount, phase, configure, t])
+  }, [mirror, playerCount, phase, configure, t, strictSideLock])
 
   // Camera came up → move to the "line up" prompt.
   useEffect(() => {

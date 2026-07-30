@@ -305,6 +305,211 @@ function pairCost(anchor: BBox, cand: Candidate, anchorSig: ColorSig | null | un
   return dist / gate + APPEARANCE_WEIGHT * sigDistance(anchorSig, cand.sig)
 }
 
+/* ---------------- N-player sticky identity (2P/3P/4P share this) ---------------- */
+
+/** Minimum fraction of the round's established player size a body must clear to be eligible for ANY slot — rejects a bystander who reads smaller (further away) than the real players. */
+export const IDENTITY_MIN_SIZE_FRACTION = 0.6
+/** Absolute floor (px) below which nothing is ever eligible, even before any slot has locked a size — protects the very first roster pick from a distant bystander. */
+export const IDENTITY_ABSOLUTE_MIN_SIZE_PX = 20
+/** How long a slot holds its last known torso position after losing its body before a DIFFERENT nearby candidate may rebind it. */
+export const IDENTITY_REBIND_HOLD_MS = 1000
+/** Max plausible single-frame torso jump, in multiples of the body's own size, before a candidate isn't a rebind candidate for that slot at all. */
+const IDENTITY_GATE_FACTOR = 3
+
+export interface TorsoAnchor extends Point {
+  /** Shoulder width when both shoulders are confident, else a scaled bbox diagonal — always positive. The distance-normalization AND the bystander size check both key off this. */
+  size: number
+}
+
+/**
+ * Torso center (mean of confident shoulders + hips) and a size estimate —
+ * the identity-matching anchor. Steadier than the bounding box, which jumps
+ * around as limbs move, and steadier than any single keypoint. Null when
+ * neither a shoulder nor a hip is confidently visible at all.
+ */
+export function torsoAnchor(pose: Pose, bbox: BBox): TorsoAnchor | null {
+  const ls = confidentPoint(pose, 'left_shoulder')
+  const rs = confidentPoint(pose, 'right_shoulder')
+  const lh = confidentPoint(pose, 'left_hip')
+  const rh = confidentPoint(pose, 'right_hip')
+  const pts = [ls, rs, lh, rh].filter((p): p is Point => p !== null)
+  if (pts.length === 0) return null
+  const x = mean(pts.map((p) => p.x))
+  const y = mean(pts.map((p) => p.y))
+  const size = ls && rs ? Math.abs(ls.x - rs.x) : bboxDiag(bbox) * 0.3
+  return { x, y, size: Math.max(1, size) }
+}
+
+/** What the N-player sticky matcher needs to know about a player slot, beyond the 2-player SlotAnchor. */
+export interface RosterAnchor extends SlotAnchor {
+  /** Live torso center when the track is alive, else null. */
+  torso: Point | null
+  /** Last torso center ever seen (survives track expiry) for re-binding. */
+  lastTorso: Point | null
+  /**
+   * This slot's body size, fixed once the roster locks at round start and
+   * never remeasured per-frame — a moving player getting closer/farther
+   * must not drift the bystander-rejection threshold mid-round.
+   */
+  boundSize: number | null
+}
+
+function torsoAnchorFor(slot: RosterAnchor, nowMs: number): Point | null {
+  if (slot.torso) return slot.torso
+  if (slot.lastTorso && nowMs - slot.lastSeenAtMs <= IDENTITY_REBIND_HOLD_MS) return slot.lastTorso
+  return null
+}
+
+/**
+ * STICKY ROLE ASSIGNMENT for 2, 3 or 4 players (roles locked, i.e. the round
+ * is running): candidates are matched to slots by torso proximity — NOT
+ * screen position — so a player's colour stays theirs even when players
+ * cross, and a background bystander (rejected by size, below) can never
+ * steal a slot. A slot that lost its body re-captures a nearby candidate for
+ * IDENTITY_REBIND_HOLD_MS; a slot with no anchor at all (never bound, or its
+ * hold window expired) falls back to plain left-to-right position, same as
+ * an unlocked calibration would use.
+ */
+export function matchLockedRolesN(
+  slots: RosterAnchor[],
+  candidates: Candidate[],
+  nowMs: number,
+  videoWidth: number,
+  mirror: boolean,
+  /**
+   * Optional extra guard (default off): each slot i only accepts bodies from
+   * the i-th of n equal screen zones (left→right), so a colour swap or a
+   * bystander stealing a slot becomes structurally impossible — at the cost
+   * of forbidding players from crossing sides during the round.
+   */
+  strictSideLock = false,
+): (Candidate | null)[] {
+  const n = slots.length
+  const result: (Candidate | null)[] = new Array(n).fill(null)
+  if (candidates.length === 0) return result
+
+  const withTorso = candidates
+    .map((c) => ({ c, t: torsoAnchor(c.pose, c.bbox) }))
+    .filter((x): x is { c: Candidate; t: TorsoAnchor } => x.t !== null)
+
+  const boundSizes = slots.map((s) => s.boundSize).filter((s): s is number => s !== null)
+  const minBoundSize = boundSizes.length > 0 ? Math.min(...boundSizes) : null
+  const eligible = withTorso.filter(({ t }) => {
+    if (t.size < IDENTITY_ABSOLUTE_MIN_SIZE_PX) return false
+    if (minBoundSize === null) return true // nothing locked yet — no relative threshold to apply
+    return t.size >= minBoundSize * IDENTITY_MIN_SIZE_FRACTION
+  })
+  if (eligible.length === 0) return result
+
+  const anchors = slots.map((s) => torsoAnchorFor(s, nowMs))
+  const previousAnchors = [...anchors] // snapshot before this frame's assignment, for the anti-swap check below
+
+  // Zone index 0..n-1, left→right in DISPLAY space (mirror-aware, same
+  // convention every positional sort in this file already uses).
+  const zoneOf = (x: number): number => {
+    const displayX = mirror ? videoWidth - x : x
+    return Math.min(n - 1, Math.max(0, Math.floor((displayX / Math.max(1, videoWidth)) * n)))
+  }
+
+  // Every (slot, candidate) pairing within the gate (and, if strictSideLock
+  // is on, within that slot's zone), cheapest first.
+  const pairs: { slot: number; cand: number; cost: number }[] = []
+  slots.forEach((slot, si) => {
+    const anchor = anchors[si]
+    if (!anchor) return
+    eligible.forEach((cand, ci) => {
+      if (strictSideLock && zoneOf(cand.t.x) !== si) return
+      const dist = Math.hypot(anchor.x - cand.t.x, anchor.y - cand.t.y)
+      const normalized = dist / Math.max(1, cand.t.size)
+      if (normalized > IDENTITY_GATE_FACTOR) return
+      pairs.push({ slot: si, cand: ci, cost: normalized + APPEARANCE_WEIGHT * sigDistance(slot.sig, cand.c.sig) })
+    })
+  })
+  pairs.sort((a, b) => a.cost - b.cost)
+
+  const usedSlots = new Set<number>()
+  const usedCandidates = new Set<number>()
+  for (const p of pairs) {
+    if (usedSlots.has(p.slot) || usedCandidates.has(p.cand)) continue
+    result[p.slot] = eligible[p.cand].c
+    usedSlots.add(p.slot)
+    usedCandidates.add(p.cand)
+  }
+
+  // Explicit anti-swap guard: two PREVIOUSLY anchored slots must never trade
+  // candidates with each other in one frame — if slot i's new pick sits
+  // closer to slot j's old anchor than to slot i's own (and vice versa),
+  // this is a swap. Reject it outright and leave both slots unassigned this
+  // frame (held via lastTorso/the hold window, exactly like a brief
+  // occlusion) rather than risk confidently binding the wrong identity.
+  for (let i = 0; i < n; i++) {
+    const ai = previousAnchors[i]
+    const ci = result[i]
+    if (!ai || !ci) continue
+    const ti = torsoAnchor(ci.pose, ci.bbox)
+    if (!ti) continue
+    for (let j = i + 1; j < n; j++) {
+      const aj = previousAnchors[j]
+      const cj = result[j]
+      if (!aj || !cj) continue
+      const tj = torsoAnchor(cj.pose, cj.bbox)
+      if (!tj) continue
+      const iToOwn = Math.hypot(ti.x - ai.x, ti.y - ai.y)
+      const iToOther = Math.hypot(ti.x - aj.x, ti.y - aj.y)
+      const jToOwn = Math.hypot(tj.x - aj.x, tj.y - aj.y)
+      const jToOther = Math.hypot(tj.x - ai.x, tj.y - ai.y)
+      if (iToOther < iToOwn && jToOther < jToOwn) {
+        result[i] = null
+        result[j] = null
+      }
+    }
+  }
+
+  // Leftover candidates go to genuinely empty seats (no anchor at all) by
+  // plain left-to-right position — never to a held slot mid-hold-window.
+  const usedFinal = new Set(result.filter((c): c is Candidate => c !== null))
+  const leftoversAll = eligible.filter((x) => !usedFinal.has(x.c))
+  if (leftoversAll.length > 0) {
+    const displayX = (c: Candidate) => (mirror ? videoWidth - c.anchorX : c.anchorX)
+    for (let si = 0; si < n; si++) {
+      if (result[si] !== null) continue
+      if (anchors[si] !== null) continue // held slot, waiting out its hold window
+      const zoneOk = strictSideLock ? leftoversAll.filter((x) => zoneOf(x.t.x) === si) : leftoversAll
+      if (zoneOk.length === 0) continue
+      const nearest = [...zoneOk].sort((a, b) => displayX(a.c) - displayX(b.c))[0]
+      result[si] = nearest.c
+      const idx = leftoversAll.indexOf(nearest)
+      if (idx >= 0) leftoversAll.splice(idx, 1)
+    }
+  }
+  return result
+}
+
+/** Above this IoU, two candidates are almost certainly the same body detected twice, not two different people. */
+const ROSTER_OVERLAP_MAX_IOU = 0.3
+
+/**
+ * Round-start roster pick: choose exactly `count` bodies to be THE players
+ * for the rest of the round — largest first (closest to the camera, most
+ * likely a real player rather than a distant bystander), skipping anything
+ * that heavily overlaps a body already picked (the same person detected
+ * twice). Anyone not picked here is never eligible for a slot later, no
+ * matter how they move — see matchLockedRolesN's size gate, keyed off the
+ * sizes recorded here. Returned left-to-right so initial colours match plain
+ * expectation (P1 = leftmost).
+ */
+export function pickRoster(candidates: Candidate[], count: number, videoWidth: number, mirror: boolean): Candidate[] {
+  const bySize = [...candidates].sort((a, b) => bboxArea(b.bbox) - bboxArea(a.bbox))
+  const picked: Candidate[] = []
+  for (const cand of bySize) {
+    if (picked.length >= count) break
+    if (picked.some((p) => iou(p.bbox, cand.bbox) > ROSTER_OVERLAP_MAX_IOU)) continue
+    picked.push(cand)
+  }
+  const displayX = (c: Candidate) => (mirror ? videoWidth - c.anchorX : c.anchorX)
+  return picked.sort((a, b) => displayX(a) - displayX(b))
+}
+
 /**
  * STICKY ROLE ASSIGNMENT (roles locked, i.e. the match is running): candidates
  * are matched to the player slots by proximity, NOT by screen position — the
@@ -740,8 +945,14 @@ export function amplitudeFactor(curr: KpMap, bboxHeight: number): number {
  * its player (lastBBox / lastSeenAtMs) so the identity matcher can re-bind a
  * re-appearing person to the same role.
  */
-export class PlayerTracker implements SlotAnchor {
+export class PlayerTracker implements RosterAnchor {
   bbox: BBox | null = null
+  /** Live torso center (shoulders+hips midpoint) — the N-player sticky matcher's anchor, steadier than bbox which jumps as limbs move. */
+  torso: Point | null = null
+  /** Last torso center ever seen (survives track expiry) for re-binding. */
+  lastTorso: Point | null = null
+  /** This slot's body size, fixed at roster lock (round start) — set externally by the engine, never remeasured per-frame. */
+  boundSize: number | null = null
   /** Smoothed activity, 0..1. */
   speed = 0
   /** Smoothed head position for the privacy mask (null when no head points). */
@@ -811,6 +1022,19 @@ export class PlayerTracker implements SlotAnchor {
     this.arms = armPose(candidate.pose)
     this.armsConfidence = armConfidence(candidate.pose)
     this.skeleton = bodySkeleton(candidate.pose)
+
+    // Torso center for the N-player sticky identity matcher — smoothed the
+    // same way the bbox/face anchors are, so a single noisy frame can't
+    // jerk a slot's anchor toward a different nearby body.
+    const freshTorso = torsoAnchor(candidate.pose, candidate.bbox)
+    if (freshTorso) {
+      const a = alphaFromTau(safeDt, BBOX_TAU_S)
+      this.torso = this.torso
+        ? { x: ema(this.torso.x, freshTorso.x, a), y: ema(this.torso.y, freshTorso.y, a) }
+        : { x: freshTorso.x, y: freshTorso.y }
+      this.lastTorso = this.torso
+    }
+
     // Clothing-colour signature (engine-sampled): smooth it so a single noisy
     // frame can't flip identity, and seed it on the first profiled frame.
     if (candidate.sig) this.sig = blendSig(this.sig, candidate.sig, alphaFromTau(safeDt, SIG_TAU_S))
@@ -862,9 +1086,10 @@ export class PlayerTracker implements SlotAnchor {
     this.speed = ema(this.speed, 0, alphaFromTau(Math.max(dt, 1 / 120), SPEED_TAU_S))
   }
 
-  /** Track expiry: live state goes, re-bind memory (lastBBox) stays. */
+  /** Track expiry: live state goes, re-bind memory (lastBBox, lastTorso, boundSize) stays. */
   private expire(): void {
     this.bbox = null
+    this.torso = null
     this.prevKp = null
     this.motionKp = null
     this.face = null
@@ -880,6 +1105,8 @@ export class PlayerTracker implements SlotAnchor {
   reset(): void {
     this.expire()
     this.lastBBox = null
+    this.lastTorso = null
+    this.boundSize = null
     this.lastSeenAtMs = -Infinity
     // Colour signature is re-bind memory (like lastBBox) — kept across a brief
     // track loss, cleared only on a genuine fresh calibration.
