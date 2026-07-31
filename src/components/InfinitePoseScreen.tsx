@@ -1,10 +1,11 @@
+import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
 import { runCountdown } from '../countdown'
 import { DEFAULT_HUD, drawPoseTarget } from '../cv/draw'
 import type { EngineFrame } from '../cv/engine'
 import { armsReady, type RawPosture } from '../cv/tracking'
-import { usePoseDetection } from '../hooks/usePoseDetection'
+import { prefetchEngine, usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { useI18n } from '../i18n'
 import {
@@ -147,6 +148,13 @@ export function InfinitePoseScreen() {
       names: [t('runner.you')],
     })
   }, [mirror, configure, t])
+
+  // This screen is its own page load (reached via a hash + full reload from
+  // Home), so Home's own prefetch never runs for it — start pulling in the
+  // model right away, while the rules card is still showing.
+  useEffect(() => {
+    prefetchEngine()
+  }, [])
 
   // Camera came up → move to the "step into frame" prompt.
   useEffect(() => {
@@ -388,7 +396,13 @@ export function InfinitePoseScreen() {
     { emoji: '💥', text: t('pose.rule.miss') },
   ]
 
-  const chromeVisible = phase === 'calibrate' || (phase === 'idle' && status !== 'running')
+  // Booting (camera + model loading) gets a small non-blocking pill only —
+  // the live video is already visible underneath by this point and must
+  // never be dimmed or covered while we're merely waiting on the model.
+  // The bigger dim+card treatment is reserved for states that genuinely
+  // need the player's attention: framing themselves, or a real error.
+  const booting = phase === 'idle' && status === 'starting'
+  const chromeVisible = phase === 'calibrate' || (phase === 'idle' && status === 'error')
   const showWorld = phase === 'play' || phase === 'over'
 
   return (
@@ -444,13 +458,26 @@ export function InfinitePoseScreen() {
         >
           ← {t('common.back')}
         </button>
-        {chromeVisible && (
+        {(chromeVisible || booting) && (
           <label className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm backdrop-blur">
             <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
             {t('online.mirror')}
           </label>
         )}
       </div>
+
+      {/* Booting: a small non-blocking pill — the live video is already
+          showing underneath, so this must never dim or cover it. */}
+      {booting && (
+        <div className="pointer-events-none absolute inset-x-0 top-20 z-20 flex justify-center">
+          <div className="flex items-center gap-3 rounded-full bg-black/70 px-6 py-3 backdrop-blur">
+            <LoaderCircle className="size-5 animate-spin text-white" aria-hidden />
+            <span className="text-base font-semibold text-white sm:text-lg">
+              {t('runner.startingCamera')}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Countdown */}
       {phase === 'countdown' && (
@@ -480,11 +507,6 @@ export function InfinitePoseScreen() {
             <h1 className="mb-2 text-2xl font-black">{t('pose.title')}</h1>
             <p className="text-sm text-white/75">{t('pose.lineUp')}</p>
           </div>
-          {status === 'starting' && (
-            <div className="rounded-full bg-black/70 px-8 py-4 text-lg font-semibold">
-              {t('runner.startingCamera')}
-            </div>
-          )}
           {status === 'running' && phase === 'calibrate' && !calibrationStalled && (
             <>
               <div

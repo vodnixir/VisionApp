@@ -1,6 +1,7 @@
+import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { sfx } from '../audio/sfx'
-import { usePoseDetection } from '../hooks/usePoseDetection'
+import { prefetchEngine, usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import type { EngineFrame } from '../cv/engine'
 import { runCountdown } from '../countdown'
@@ -128,6 +129,14 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
       names,
     })
   }, [mirror, players, configure, t, lang])
+
+  // This screen is its own page load (reached via a hash + full reload from
+  // Home), so Home's own prefetch never runs for it — start pulling in the
+  // model right away, while the rules card is still showing (harmless for
+  // #runner-demo too: it's a fire-and-forget CPU/GPU warm-up, no camera).
+  useEffect(() => {
+    prefetchEngine()
+  }, [])
 
   // Camera came up → move to the calibration prompt.
   useEffect(() => {
@@ -413,7 +422,13 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
     { emoji: '❤️', text: players === 1 ? t('runner.rule.livesSolo') : t('runner.rule.livesRace') },
   ]
 
-  const chromeVisible = phase === 'idle' || phase === 'calibrate'
+  // Booting gets a small non-blocking pill only — the live video is already
+  // visible underneath, and must never be dimmed/covered while we're merely
+  // waiting on the model. The bigger dim+card treatment stays reserved for
+  // states that genuinely need the player's attention (the enable-camera
+  // button, framing, a real error).
+  const booting = phase === 'idle' && status === 'starting'
+  const chromeVisible = (phase === 'idle' && status !== 'starting') || phase === 'calibrate'
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-slate-950 text-white select-none">
@@ -469,13 +484,26 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
         >
           ← {t('common.back')}
         </button>
-        {chromeVisible && (
+        {(chromeVisible || booting) && (
           <label className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm backdrop-blur">
             <input type="checkbox" checked={mirror} onChange={(e) => setMirror(e.target.checked)} />
             {t('online.mirror')}
           </label>
         )}
       </div>
+
+      {/* Booting: a small non-blocking pill — the live video is already
+          showing underneath, so this must never dim or cover it. */}
+      {booting && (
+        <div className="pointer-events-none absolute inset-x-0 top-20 z-20 flex justify-center">
+          <div className="flex items-center gap-3 rounded-full bg-black/70 px-6 py-3 backdrop-blur">
+            <LoaderCircle className="size-5 animate-spin text-white" aria-hidden />
+            <span className="text-base font-semibold text-white sm:text-lg">
+              {t('runner.startingCamera')}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Countdown */}
       {phase === 'countdown' && (
@@ -513,11 +541,6 @@ export function RunnerGameScreen({ demo = false }: { demo?: boolean }) {
             >
               {t('runner.enableCamera')}
             </button>
-          )}
-          {status === 'starting' && (
-            <div className="rounded-full bg-black/70 px-8 py-4 text-lg font-semibold">
-              {t('runner.startingCamera')}
-            </div>
           )}
           {status === 'running' && (
             <div className="flex flex-col items-center gap-3">

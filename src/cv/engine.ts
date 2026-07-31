@@ -1,5 +1,6 @@
 import * as tf from '@tensorflow/tfjs-core'
 import '@tensorflow/tfjs-backend-webgl'
+import { loadGraphModel } from '@tensorflow/tfjs-converter'
 import * as poseDetection from '@tensorflow-models/pose-detection'
 import { playerColors } from '../theme'
 import {
@@ -261,6 +262,161 @@ export function slotColor(i: number): string {
   return playerColors()[i] ?? MULTI_PLAYER_COLORS[i % MULTI_PLAYER_COLORS.length]
 }
 
+/* ---------------- GPU backend (module-level: shared, not per-engine) ---------------- */
+
+async function initBackend(): Promise<void> {
+  let cached: string | null = null
+  try {
+    cached = localStorage.getItem(BACKEND_CACHE_KEY)
+  } catch {
+    /* storage unavailable */
+  }
+
+  // Stable tensor shapes come from crop quantization; this flag removes the
+  // remaining shader recompiles by passing shapes as uniforms (WebGL only).
+  try {
+    tf.env().set('WEBGL_USE_SHAPES_UNIFORMS', true)
+  } catch {
+    /* older tfjs without the flag */
+  }
+
+  if (cached !== 'webgl' && 'gpu' in navigator) {
+    try {
+      await import('@tensorflow/tfjs-backend-webgpu')
+      await tf.setBackend('webgpu')
+      await tf.ready()
+      rememberBackend('webgpu')
+      return
+    } catch {
+      /* fall through to WebGL */
+    }
+  }
+  try {
+    await tf.setBackend('webgl')
+    await tf.ready()
+    rememberBackend('webgl')
+  } catch {
+    throw new Error('Neither WebGPU nor WebGL is available — the pose model cannot run.')
+  }
+}
+
+function rememberBackend(name: 'webgpu' | 'webgl'): void {
+  try {
+    localStorage.setItem(BACKEND_CACHE_KEY, name)
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/* ---------------- Shared MoveNet detector (singleton across mode switches) ---------------- */
+
+/** Same-origin, bundled with the app at build time — never a third-party CDN. */
+function bundledModelUrl(): string {
+  return `${import.meta.env.BASE_URL}models/movenet-multipose/model.json`
+}
+
+/** IndexedDB key a successfully-loaded model is cached under, so the second
+ * and later launches on this device skip the network fetch entirely. */
+const MODEL_CACHE_URL = 'indexeddb://movenet-multipose-lightning-v1'
+
+let sharedDetectorPromise: Promise<poseDetection.PoseDetector> | null = null
+let sharedWarmupDone = false
+let warmupFrame: HTMLCanvasElement | null = null
+
+/**
+ * A neutral, camera-shaped frame used only to compile shaders — never the
+ * real webcam — so warm-up can run before the player has granted camera
+ * permission at all (e.g. while they're still reading a rules card).
+ */
+function getWarmupFrame(): HTMLCanvasElement {
+  if (!warmupFrame) {
+    warmupFrame = document.createElement('canvas')
+    warmupFrame.width = 1280
+    warmupFrame.height = 720
+    const ctx = warmupFrame.getContext('2d', { alpha: false })
+    if (ctx) {
+      ctx.fillStyle = '#808080'
+      ctx.fillRect(0, 0, warmupFrame.width, warmupFrame.height)
+    }
+  }
+  return warmupFrame
+}
+
+/**
+ * Load MoveNet from the on-device IndexedDB cache first. Only the very first
+ * launch ever (or a manually-cleared cache) pays for the bundled-file fetch —
+ * every launch after that finds the cached copy and skips the download
+ * entirely, exactly like a "cache" is meant to work. A cache miss falls back
+ * to the bundled model (already same-origin, never a third-party CDN) and
+ * seeds the cache in the background for next time.
+ */
+async function loadMoveNetModel(): Promise<poseDetection.PoseDetector> {
+  const modelType = poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING
+  try {
+    return await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+      modelType,
+      modelUrl: MODEL_CACHE_URL,
+      enableTracking: false,
+      enableSmoothing: false,
+    })
+  } catch {
+    const detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+      modelType,
+      modelUrl: bundledModelUrl(),
+      enableTracking: false,
+      enableSmoothing: false,
+    })
+    // Seed the cache in the background — never delays returning the detector
+    // that's already loaded and ready to use above.
+    void loadGraphModel(bundledModelUrl())
+      .then((model) => model.save(MODEL_CACHE_URL))
+      .catch(() => {
+        /* best-effort — worst case, the next launch just re-loads the bundled copy */
+      })
+    return detector
+  }
+}
+
+/**
+ * One detector for the whole page session, created once and reused across
+ * every mode switch and every "play again" — without this, each mode entry
+ * reloaded MoveNet from scratch, which alone could explain a slow-feeling
+ * camera boot on every single round, not just the first. Also runs the
+ * one-time shader warm-up the first time it resolves, so every later caller
+ * (this session) skips both costs and resolves near-instantly.
+ */
+function getSharedDetector(): Promise<poseDetection.PoseDetector> {
+  if (!sharedDetectorPromise) {
+    sharedDetectorPromise = loadMoveNetModel().then(async (detector) => {
+      if (!sharedWarmupDone) {
+        sharedWarmupDone = true
+        try {
+          await detector.estimatePoses(getWarmupFrame())
+        } catch {
+          /* best-effort — a real frame will compile the shaders anyway */
+        }
+      }
+      return detector
+    })
+  }
+  return sharedDetectorPromise
+}
+
+/**
+ * Fire-and-forget: begin loading (and warming up) the model while the player
+ * is still reading the home screen or a mode's rules card, so it's already
+ * resident by the time they actually start a round. Safe to call from
+ * several screens, or more than once — getSharedDetector() only ever does
+ * the real work the first time.
+ */
+export function preloadDetector(): void {
+  void initBackend()
+    .then(() => getSharedDetector())
+    .catch((err) => {
+      console.warn('[Boot] Preload failed — the real start() call will retry:', err)
+    })
+}
+
 /**
  * Owns the webcam stream, the TFJS detector and two loops:
  *  - an inference loop paced by NEW camera frames (requestVideoFrameCallback
@@ -330,35 +486,23 @@ export class PoseEngine {
     this.onFatal = onFatal
   }
 
-  /** Full boot: camera -> GPU backend -> MoveNet -> loops. Safe to abort via destroy(). */
+  /**
+   * Boot, reordered for time-to-visible-video, not just correctness:
+   * camera acquisition and GPU-backend init don't depend on each other at
+   * all, so they now run in PARALLEL (they used to be sequential for no
+   * reason). The render loop — which only needs a playing video, never the
+   * detector — starts the moment the video has real dimensions, so the
+   * player sees themselves immediately. Only scoring (the inference loop)
+   * waits for the model to finish loading and warming up. Safe to abort via
+   * destroy() at any point.
+   */
   async start(cameraId?: string | null): Promise<void> {
     if (this.running || this.destroyed) return
+    const t0 = performance.now()
+    const mark = (label: string) => console.log(`[Boot] ${label}: ${Math.round(performance.now() - t0)}ms`)
 
-    // 1. Camera. A remembered deviceId may be stale (USB cam unplugged,
-    //    permissions re-scoped) — fall back to the default front camera.
-    const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
-    let stream: MediaStream
-    try {
-      stream = cameraId
-        ? await navigator.mediaDevices.getUserMedia({
-            video: { deviceId: { exact: cameraId }, ...size },
-            audio: false,
-          })
-        : await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', ...size },
-            audio: false,
-          })
-    } catch (err) {
-      if (!cameraId) throw new Error(friendlyCameraError(err))
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', ...size },
-          audio: false,
-        })
-      } catch (err2) {
-        throw new Error(friendlyCameraError(err2))
-      }
-    }
+    const [stream] = await Promise.all([this.acquireCamera(cameraId), initBackend()])
+    mark('camera + GPU backend both ready (parallel)')
     if (this.destroyed) {
       stream.getTracks().forEach((t) => t.stop())
       return
@@ -372,77 +516,54 @@ export class PoseEngine {
     this.video.srcObject = stream
     await this.video.play()
     await this.waitForVideoSize()
+    mark('video visible (has real dimensions)')
     if (this.destroyed) return
 
-    // 2. GPU backend: WebGPU when the device has it, WebGL otherwise.
-    await this.initBackend()
-    if (this.destroyed) return
-
-    // 3. MoveNet MultiPose Lightning. The model is bundled with the app
-    //    (public/models) so no internet is needed at runtime. Tracking and
-    //    smoothing are OFF: the ROI crop changes the coordinate space between
-    //    frames (which would corrupt the built-in tracker), so identity and
-    //    smoothing are handled by our own trackers in full-frame coordinates.
-    const detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
-      modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
-      modelUrl: `${import.meta.env.BASE_URL}models/movenet-multipose/model.json`,
-      enableTracking: false,
-      enableSmoothing: false,
-    })
-    if (this.destroyed) {
-      detector.dispose()
-      return
-    }
-    this.detector = detector
-
-    // 4. Loops
+    // The player sees themselves from here on — everything below is
+    // scoring-only (model load + shader warm-up) and must never block this.
     this.running = true
     this.lastInferenceAt = performance.now()
     this.renderRaf = requestAnimationFrame(this.renderTick)
+
+    // Shared across every mode, screen and retry for the life of this page
+    // (see getSharedDetector) — tracking/smoothing stay OFF regardless: the
+    // ROI crop changes the coordinate space between frames (which would
+    // corrupt the built-in tracker), so identity and smoothing are handled
+    // by our own trackers in full-frame coordinates. Only the very first
+    // call in the whole session actually loads + warms the model; every
+    // later call (mode switch, Play Again, a completely different game)
+    // resolves near-instantly.
+    const detector = await getSharedDetector()
+    mark('MoveNet model ready (shared — instant after the first call this session)')
+    if (this.destroyed) return // never dispose — the detector outlives this engine
+    this.detector = detector
+
     void this.inferenceLoop()
   }
 
-  private async initBackend(): Promise<void> {
-    let cached: string | null = null
+  /** getUserMedia with the same stale-deviceId fallback as before, extracted so start() can run it in parallel with GPU backend init. */
+  private async acquireCamera(cameraId?: string | null): Promise<MediaStream> {
+    const size = { width: { ideal: 1280 }, height: { ideal: 720 } }
     try {
-      cached = localStorage.getItem(BACKEND_CACHE_KEY)
-    } catch {
-      /* storage unavailable */
-    }
-
-    // Stable tensor shapes come from crop quantization; this flag removes the
-    // remaining shader recompiles by passing shapes as uniforms (WebGL only).
-    try {
-      tf.env().set('WEBGL_USE_SHAPES_UNIFORMS', true)
-    } catch {
-      /* older tfjs without the flag */
-    }
-
-    if (cached !== 'webgl' && 'gpu' in navigator) {
+      return cameraId
+        ? await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: cameraId }, ...size },
+            audio: false,
+          })
+        : await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', ...size },
+            audio: false,
+          })
+    } catch (err) {
+      if (!cameraId) throw new Error(friendlyCameraError(err))
       try {
-        await import('@tensorflow/tfjs-backend-webgpu')
-        await tf.setBackend('webgpu')
-        await tf.ready()
-        this.rememberBackend('webgpu')
-        return
-      } catch {
-        /* fall through to WebGL */
+        return await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', ...size },
+          audio: false,
+        })
+      } catch (err2) {
+        throw new Error(friendlyCameraError(err2))
       }
-    }
-    try {
-      await tf.setBackend('webgl')
-      await tf.ready()
-      this.rememberBackend('webgl')
-    } catch {
-      throw new Error('Neither WebGPU nor WebGL is available — the pose model cannot run.')
-    }
-  }
-
-  private rememberBackend(name: 'webgpu' | 'webgl'): void {
-    try {
-      localStorage.setItem(BACKEND_CACHE_KEY, name)
-    } catch {
-      /* storage unavailable */
     }
   }
 
@@ -456,7 +577,8 @@ export class PoseEngine {
     this.destroyed = true
     this.running = false
     cancelAnimationFrame(this.renderRaf)
-    this.detector?.dispose()
+    // The detector is shared across the whole page session (see
+    // getSharedDetector) — never dispose it here, just stop using it.
     this.detector = null
     this.stream?.getTracks().forEach((t) => t.stop())
     this.stream = null

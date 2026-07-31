@@ -183,7 +183,6 @@ const en = {
   'tour.abandon': 'End tournament',
 
   'load.title': 'Starting camera',
-  'load.sub': 'camera · webgl · pose model',
   'err.title': 'Engine error',
   'err.back': 'Back',
 
@@ -536,7 +535,6 @@ const ru: Dict = {
   'tour.abandon': 'Завершить турнир',
 
   'load.title': 'Запускаем камеру',
-  'load.sub': 'камера · webgl · модель поз',
   'err.title': 'Ошибка движка',
   'err.back': 'Назад',
 
@@ -886,7 +884,6 @@ const es: Dict = {
   'tour.abandon': 'Terminar torneo',
 
   'load.title': 'Iniciando cámara',
-  'load.sub': 'cámara · webgl · modelo de poses',
   'err.title': 'Error del motor',
   'err.back': 'Volver',
 
@@ -1236,7 +1233,6 @@ const pt: Dict = {
   'tour.abandon': 'Encerrar torneio',
 
   'load.title': 'Iniciando câmera',
-  'load.sub': 'câmera · webgl · modelo de poses',
   'err.title': 'Erro do motor',
   'err.back': 'Voltar',
 

@@ -7,22 +7,32 @@ import type { EngineConfig, EngineFrame, PoseEngine } from '../cv/engine'
 export type EngineStatus = 'idle' | 'starting' | 'running' | 'error'
 
 /**
- * Hard ceiling on how long "starting" may show. Camera permission prompts,
- * GPU backend probing and model loading are all normally well under this —
- * if it's not done by here, something is stuck, and a silent infinite
- * loading screen is worse than a wrong-but-visible error the player can act
- * on (retry, or go check camera permissions).
+ * Hard ceiling on how long "starting" may show — a safety net for a genuine
+ * hang, not the primary feedback mechanism (that's the video itself, visible
+ * within ~1s, plus the small "getting ready" indicator each screen shows).
+ * Camera permission failures reject almost immediately on their own (see
+ * friendlyCameraError in cv/engine.ts) and never hit this timeout at all —
+ * this only fires for an actual stall (dead GPU pipeline, stuck fetch on a
+ * bad connection), so its message must never blame permissions.
  */
-const CAMERA_START_TIMEOUT_MS = 10000
+const CAMERA_START_TIMEOUT_MS = 20000
 
-/** Fire-and-forget warm-up of the engine chunk while the user reads the menu. */
+/**
+ * Fire-and-forget warm-up while the user reads the menu or a mode's rules
+ * card: pulls in the heavy TFJS chunk AND starts loading (and warming up)
+ * the MoveNet model itself, so both are already resident by the time the
+ * player actually taps start. Every screen that uses usePoseDetection calls
+ * this on mount — cheap to call more than once, the underlying engine only
+ * ever does the real work the first time per page load (see
+ * getSharedDetector in cv/engine.ts).
+ */
 export function prefetchEngine(): void {
   const idle =
     typeof requestIdleCallback === 'function'
       ? (cb: () => void) => requestIdleCallback(cb, { timeout: 3000 })
       : (cb: () => void) => setTimeout(cb, 1500)
   idle(() => {
-    void import('../cv/engine')
+    void import('../cv/engine').then((engine) => engine.preloadDetector())
   })
 }
 
@@ -103,7 +113,7 @@ export function usePoseDetection(onFrame: (frame: EngineFrame) => void) {
       let timeoutId: ReturnType<typeof setTimeout> | undefined
       const timeout = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(
-          () => reject(new Error('Camera took too long to start. Check camera permissions and try again.')),
+          () => reject(new Error('This is taking much longer than usual. Check your connection and try again.')),
           CAMERA_START_TIMEOUT_MS,
         )
       })

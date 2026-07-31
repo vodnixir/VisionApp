@@ -4,7 +4,7 @@ import { sfx } from '../audio/sfx'
 import { MatchRecorder } from '../recorder'
 import { useMatchClip } from '../hooks/useMatchClip'
 import { ClipShare } from './ClipShare'
-import { usePoseDetection } from '../hooks/usePoseDetection'
+import { prefetchEngine, usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { runCountdown } from '../countdown'
 import type { EngineFrame } from '../cv/engine'
@@ -179,6 +179,13 @@ export function OnlineBattleScreen({ initialInvite }: { initialInvite?: string }
       names: [t('runner.you'), ''],
     })
   }, [mirror, configure, t, lang])
+
+  // This screen is its own page load — start pulling in the model right away
+  // (no camera permission needed for this, so it's safe well before the
+  // signaling/invite flow brings the camera up).
+  useEffect(() => {
+    prefetchEngine()
+  }, [])
 
   // Whether this phase wants the camera live (framing, calibrating, playing).
   const needsCamera =
