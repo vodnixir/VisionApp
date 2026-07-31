@@ -24,6 +24,8 @@ import {
   HANDICAP_STEPS,
   MATCH_MODES,
   PAUSE_SPEEDS,
+  POSE_SPEEDS,
+  POSE_STRICTNESSES,
   ROUND_DURATION_MS,
   ROUND_MODES,
   SENSITIVITIES,
@@ -242,27 +244,80 @@ export function MatchSetupScreen({ settings, onPatch, onSetPlayer, onStart, onBa
           </div>
         )}
 
-        <div className="rounded-2xl border border-edge bg-card p-4">
-          <p className="mb-3 text-xs font-medium tracking-wider text-t3">
-            {t('setup.sensitivity').toUpperCase()}
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            {SENSITIVITIES.map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => onPatch({ sensitivity: level })}
-                className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
-                  settings.sensitivity === level
-                    ? 'border-sel bg-selbg text-sel'
-                    : 'border-edge text-t2 hover:border-edge2'
-                }`}
-              >
-                {t(`sens.${level}`)}
-              </button>
-            ))}
+        {/* Pose mode gets its own Strictness/Speed dials instead of the
+            generic sensitivity picker — "close enough" and "how long you
+            get" mean something different for copying a pose than for the
+            movement-based modes below. */}
+        {settings.matchMode === 'pose' ? (
+          <>
+            <div className="rounded-2xl border border-edge bg-card p-4">
+              <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+                {t('setup.poseStrictness').toUpperCase()}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {POSE_STRICTNESSES.map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => onPatch({ poseStrictness: level })}
+                    className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                      settings.poseStrictness === level
+                        ? 'border-sel bg-selbg text-sel'
+                        : 'border-edge text-t2 hover:border-edge2'
+                    }`}
+                  >
+                    {t(`posestrict.${level}`)}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-t3">{t('setup.poseStrictnessHint')}</p>
+            </div>
+
+            <div className="rounded-2xl border border-edge bg-card p-4">
+              <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+                {t('setup.poseSpeed').toUpperCase()}
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {POSE_SPEEDS.map((speed) => (
+                  <button
+                    key={speed}
+                    type="button"
+                    onClick={() => onPatch({ poseSpeed: speed })}
+                    className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                      settings.poseSpeed === speed
+                        ? 'border-sel bg-selbg text-sel'
+                        : 'border-edge text-t2 hover:border-edge2'
+                    }`}
+                  >
+                    {t(`posespeed.${speed}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-2xl border border-edge bg-card p-4">
+            <p className="mb-3 text-xs font-medium tracking-wider text-t3">
+              {t('setup.sensitivity').toUpperCase()}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {SENSITIVITIES.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => onPatch({ sensitivity: level })}
+                  className={`rounded-xl border px-2 py-3 text-sm font-semibold transition-all ${
+                    settings.sensitivity === level
+                      ? 'border-sel bg-selbg text-sel'
+                      : 'border-edge text-t2 hover:border-edge2'
+                  }`}
+                >
+                  {t(`sens.${level}`)}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {cameras.length > 1 && (
           <div className="rounded-2xl border border-edge bg-card p-4">

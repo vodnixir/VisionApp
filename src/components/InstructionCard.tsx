@@ -16,6 +16,8 @@ interface Props {
   preview?: ReactNode
   /** The ordered "how to play" rules shown as a list. */
   rules: Rule[]
+  /** Optional extra content (e.g. pre-round settings) between the rules and the buttons. */
+  extra?: ReactNode
   /** Primary CTA label (defaults to "Let's go"). */
   startLabel?: string
   onStart: () => void
@@ -28,7 +30,7 @@ interface Props {
  * arcade/neon tokens (bg-page/card, accent, edge) so it matches every theme and
  * layers over the menu backdrop with high contrast.
  */
-export function InstructionCard({ title, subtitle, preview, rules, startLabel, onStart, onBack }: Props) {
+export function InstructionCard({ title, subtitle, preview, rules, extra, startLabel, onStart, onBack }: Props) {
   const { t } = useI18n()
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -59,6 +61,8 @@ export function InstructionCard({ title, subtitle, preview, rules, startLabel, o
             </li>
           ))}
         </ul>
+
+        {extra && <div className="mb-4 landscape:mb-2">{extra}</div>}
 
         <div className="flex gap-3">
           <button

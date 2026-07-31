@@ -16,6 +16,17 @@ import {
   poseTargetFor,
   type PoseId,
 } from '../modes'
+import { loadSettingsPatch, saveSettings } from '../storage'
+import {
+  DEFAULT_SETTINGS,
+  POSE_SPEEDS,
+  POSE_SPEED_SECONDS,
+  POSE_STRICTNESSES,
+  POSE_STRICTNESS_BAND,
+  type PoseDifficultyBand,
+  type PoseSpeed,
+  type PoseStrictness,
+} from '../types'
 import { InstructionCard, type Rule } from './InstructionCard'
 import { PoseStickFigure } from './PoseStickFigure'
 
@@ -34,27 +45,45 @@ const START_LIVES = 3
  * tolerance, longer required continuous hold, higher threshold) already
  * carries Infinite Pose's difficulty curve; this window only exists so
  * standing still and never attempting a pose can't stall the run forever.
+ * Starts from the chosen Speed setting (POSE_SPEED_SECONDS) and decays with
+ * level, same as the difficulty ramp below.
  */
-const BASE_WINDOW_MS = 4000
 const MIN_WINDOW_MS = 1200
 const WINDOW_DECAY = 0.95
 
-function poseWindowMs(attemptNumber: number): number {
-  return Math.max(MIN_WINDOW_MS, BASE_WINDOW_MS * Math.pow(WINDOW_DECAY, attemptNumber))
+function poseWindowMs(attemptNumber: number, baseWindowMs: number): number {
+  return Math.max(MIN_WINDOW_MS, baseWindowMs * Math.pow(WINDOW_DECAY, attemptNumber))
 }
 
-interface PoseBand {
-  toleranceDeg: number
-  holdMs: number
-  passThreshold: number
+/**
+ * Tier breakpoints for how far the escalation has tightened toward the
+ * Exact preset: 0 = right at the chosen Strictness setting, 1 = fully at
+ * Exact (the hard ceiling — escalation never gets stricter than that,
+ * regardless of level). Breakpoints match the original hand-tuned table;
+ * only the start (the chosen preset) and the ceiling (Exact) now come from
+ * the setting instead of being hardcoded.
+ */
+const ESCALATION_TIERS: { level: number; t: number }[] = [
+  { level: 1, t: 0 },
+  { level: 6, t: 0.35 },
+  { level: 13, t: 0.65 },
+  { level: 21, t: 1 },
+]
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t
 }
 
-/** Infinite Pose escalation table. attemptNumber is 1-indexed (the "Level" shown on screen) — pool expansion (Tier 2 from 6) lives in nextInfinitePoseId itself. */
-function poseBandFor(attemptNumber: number): PoseBand {
-  if (attemptNumber >= 21) return { toleranceDeg: 18, holdMs: 500, passThreshold: 0.8 }
-  if (attemptNumber >= 13) return { toleranceDeg: 22, holdMs: 700, passThreshold: 0.72 }
-  if (attemptNumber >= 6) return { toleranceDeg: 28, holdMs: 900, passThreshold: 0.65 }
-  return { toleranceDeg: 35, holdMs: 1200, passThreshold: 0.55 }
+/** Infinite Pose escalation. attemptNumber is 1-indexed (the "Level" shown on screen) — pool expansion (Tier 2 from 6) lives in nextInfinitePoseId itself. Scales FROM the chosen Strictness preset toward Exact; never stricter than Exact. */
+function poseBandFor(attemptNumber: number, base: PoseDifficultyBand): PoseDifficultyBand {
+  const exact = POSE_STRICTNESS_BAND.exact
+  let t = 0
+  for (const tier of ESCALATION_TIERS) if (attemptNumber >= tier.level) t = tier.t
+  return {
+    toleranceDeg: lerp(base.toleranceDeg, exact.toleranceDeg, t),
+    passThreshold: lerp(base.passThreshold, exact.passThreshold, t),
+    holdMs: lerp(base.holdMs, exact.holdMs, t),
+  }
 }
 
 /** Below this fraction of the video's height, the tracked torso reads too small — the player is too far away. */
@@ -69,6 +98,35 @@ function framingHint(posture: RawPosture | null, videoHeight: number): 'stepBack
   if (frac < FAR_TORSO_FRACTION) return 'comeCloser'
   if (frac > CLOSE_TORSO_FRACTION) return 'stepBack'
   return null
+}
+
+/** Live match-quality ring — 3m-legible feedback for "getting warmer/colder", separate from the pass/fail per-limb skeleton colors. */
+function MatchRing({ pct }: { pct: number }) {
+  const r = 24
+  const c = 2 * Math.PI * r
+  const clamped = Math.max(0, Math.min(100, pct))
+  const offset = c * (1 - clamped / 100)
+  const color = clamped >= 80 ? '#a3e635' : clamped >= 45 ? '#facc15' : '#f87171'
+  return (
+    <div className="relative flex size-16 shrink-0 items-center justify-center">
+      <svg viewBox="0 0 56 56" className="size-16 -rotate-90">
+        <circle cx="28" cy="28" r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="6" />
+        <circle
+          cx="28"
+          cy="28"
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 100ms linear, stroke 150ms linear' }}
+        />
+      </svg>
+      <span className="absolute text-base font-black tabular-nums text-white">{Math.round(clamped)}%</span>
+    </div>
+  )
 }
 
 const BEST_KEY = 'sb.pose.best.v1'
@@ -115,13 +173,20 @@ export function InfinitePoseScreen() {
   const [hintText, setHintText] = useState<string | null>(null)
   const [hintIcon, setHintIcon] = useState<string>('🙌')
   const [holdProgress, setHoldProgress] = useState(0)
+  const [matchScore, setMatchScore] = useState(0)
   const [calibrationStalled, setCalibrationStalled] = useState(false)
+  const [poseStrictness, setPoseStrictness] = useState<PoseStrictness>(
+    () => loadSettingsPatch().poseStrictness ?? DEFAULT_SETTINGS.poseStrictness,
+  )
+  const [poseSpeed, setPoseSpeed] = useState<PoseSpeed>(
+    () => loadSettingsPatch().poseSpeed ?? DEFAULT_SETTINGS.poseSpeed,
+  )
   const wakeLock = useWakeLock()
 
   const lockStartRef = useRef<number | null>(null)
   const calibrationStartRef = useRef<number | null>(null)
   const currentPoseIdRef = useRef<PoseId | null>(null)
-  const bandRef = useRef<PoseBand>(poseBandFor(1))
+  const bandRef = useRef<PoseDifficultyBand>(poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness]))
   const holdStartRef = useRef<number | null>(null)
   const windowStartRef = useRef(0)
   const attemptRef = useRef(1)
@@ -205,7 +270,7 @@ export function InfinitePoseScreen() {
   /** Choose the next target pose (at the CURRENT attempt number) and reset the hold accumulator + outer window. Does not itself change the attempt number — landing vs missing decide that. */
   const advancePose = (now: number) => {
     currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptRef.current, Math.random)
-    bandRef.current = poseBandFor(attemptRef.current)
+    bandRef.current = poseBandFor(attemptRef.current, POSE_STRICTNESS_BAND[poseStrictness])
     holdStartRef.current = null
     windowStartRef.current = now
     drawOverlay(currentPoseIdRef.current)
@@ -288,6 +353,7 @@ export function InfinitePoseScreen() {
 
         const band = bandRef.current
         const match = poseSimilarity(pose, confidence, poseId, band.toleranceDeg)
+        setMatchScore(match)
         const armScores = poseArmScores(pose, confidence, poseId, band.toleranceDeg)
         configure({
           hud: {
@@ -315,7 +381,7 @@ export function InfinitePoseScreen() {
           setHoldProgress(0)
         }
 
-        const window = poseWindowMs(attemptRef.current)
+        const window = poseWindowMs(attemptRef.current, POSE_SPEED_SECONDS[poseSpeed] * 1000)
         if (frame.now - windowStartRef.current >= window) {
           // Missed this pose — costs a life, but the run continues at the
           // same difficulty (a new pose, not a harder one) until lives run out.
@@ -344,11 +410,12 @@ export function InfinitePoseScreen() {
     // band, so a brand-new player gets an early success and can confirm the
     // system is actually responding to them before anything harder shows up.
     currentPoseIdRef.current = 't_pose'
-    bandRef.current = poseBandFor(1)
+    bandRef.current = poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness])
     holdStartRef.current = null
     windowStartRef.current = performance.now()
     setIsNewBest(false)
     setHoldProgress(0)
+    setMatchScore(0)
     drawOverlay('t_pose')
     console.log('[Calibration] Countdown complete — entering the pose game loop.')
     setPhase('play')
@@ -363,6 +430,16 @@ export function InfinitePoseScreen() {
       setIsNewBest(true)
     }
     setPhase('over')
+  }
+
+  /** Strictness/Speed are shared with Copy the Pose (2P duel) via the same persisted settings — re-read fresh so this only ever touches its own two fields, never clobbering unrelated settings saved elsewhere. */
+  const updatePoseStrictness = (value: PoseStrictness) => {
+    setPoseStrictness(value)
+    saveSettings({ ...DEFAULT_SETTINGS, ...loadSettingsPatch(), poseStrictness: value, poseSpeed })
+  }
+  const updatePoseSpeed = (value: PoseSpeed) => {
+    setPoseSpeed(value)
+    saveSettings({ ...DEFAULT_SETTINGS, ...loadSettingsPatch(), poseStrictness, poseSpeed: value })
   }
 
   const handleRulesStart = () => {
@@ -436,6 +513,7 @@ export function InfinitePoseScreen() {
               ))}
             </span>
           </div>
+          {phase === 'play' && <MatchRing pct={matchScore * 100} />}
           {phase === 'play' && holdProgress > 0 && (
             <div className="h-2 w-40 overflow-hidden rounded-full bg-white/20">
               <div className="h-full rounded-full bg-lime-400" style={{ width: `${holdProgress * 100}%` }} />
@@ -495,6 +573,53 @@ export function InfinitePoseScreen() {
           subtitle={t('pose.subtitle')}
           preview={<PoseStickFigure left={{ upper: 90, fore: 90 }} right={{ upper: 90, fore: 90 }} />}
           rules={rules}
+          extra={
+            <div className="flex flex-col gap-3">
+              <div>
+                <p className="mb-2 text-[11px] font-semibold tracking-wider text-t3">
+                  {t('setup.poseStrictness').toUpperCase()}
+                </p>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {POSE_STRICTNESSES.map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => updatePoseStrictness(level)}
+                      className={`rounded-lg border px-1 py-2 text-xs font-semibold transition-all ${
+                        poseStrictness === level
+                          ? 'border-sel bg-selbg text-sel'
+                          : 'border-edge text-t2 hover:border-edge2'
+                      }`}
+                    >
+                      {t(`posestrict.${level}`)}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-t3">{t('setup.poseStrictnessHint')}</p>
+              </div>
+              <div>
+                <p className="mb-2 text-[11px] font-semibold tracking-wider text-t3">
+                  {t('setup.poseSpeed').toUpperCase()}
+                </p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {POSE_SPEEDS.map((speed) => (
+                    <button
+                      key={speed}
+                      type="button"
+                      onClick={() => updatePoseSpeed(speed)}
+                      className={`rounded-lg border px-1 py-2 text-xs font-semibold transition-all ${
+                        poseSpeed === speed
+                          ? 'border-sel bg-selbg text-sel'
+                          : 'border-edge text-t2 hover:border-edge2'
+                      }`}
+                    >
+                      {t(`posespeed.${speed}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          }
           onStart={handleRulesStart}
           onBack={goHome}
         />

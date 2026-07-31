@@ -30,7 +30,8 @@ import {
   specDeg,
   type PoseId,
 } from '../src/modes'
-import type { ArmPose, Limb } from '../src/cv/tracking'
+import { armConfidence, armPose, type ArmPose, type Limb } from '../src/cv/tracking'
+import { POSE_STRICTNESSES, POSE_STRICTNESS_BAND } from '../src/types'
 import {
   HIGHLIGHT_TARGET_MS,
   PORTRAIT_H,
@@ -1390,6 +1391,112 @@ ok('pickRoster: largest, non-overlapping bodies, left-to-right', () => {
     const size = torsoAnchor(c.pose, c.bbox)!.size
     assert.ok(size > 50, 'never picks the smaller bystander over a real player')
   }
+})
+
+console.log('pose difficulty presets (Easy/Normal/Strict/Exact)')
+
+/**
+ * Fabricated MoveNet-shaped Pose for a clean T-pose: both arms held straight
+ * out to the sides. Unlike fakePose above (arms hanging down — fine for the
+ * identity tests, which don't care about arm shape), this drives the REAL
+ * keypoint-to-ArmPose path (armPose/armConfidence), not a hand-built ArmPose,
+ * per the explicit ask: prove the path the game actually calls works, not
+ * just the math one layer in.
+ */
+function fakeTPoseKeypoints(cx: number, cy: number, scale = 60): Pose {
+  const half = scale / 2
+  const reach = scale * 1.4
+  const positions: Record<string, [number, number]> = {
+    nose: [cx, cy - scale * 1.6],
+    left_eye: [cx + 6, cy - scale * 1.65],
+    right_eye: [cx - 6, cy - scale * 1.65],
+    left_ear: [cx + 12, cy - scale * 1.6],
+    right_ear: [cx - 12, cy - scale * 1.6],
+    left_shoulder: [cx + half, cy - scale],
+    right_shoulder: [cx - half, cy - scale],
+    // Arms straight out to the sides, level with the shoulders — a clean T.
+    left_elbow: [cx + half + reach, cy - scale],
+    right_elbow: [cx - half - reach, cy - scale],
+    left_wrist: [cx + half + 2 * reach, cy - scale],
+    right_wrist: [cx - half - 2 * reach, cy - scale],
+    left_hip: [cx + half * 0.8, cy - scale * 0.1],
+    right_hip: [cx - half * 0.8, cy - scale * 0.1],
+    left_knee: [cx + half * 0.8, cy + scale * 0.5],
+    right_knee: [cx - half * 0.8, cy + scale * 0.5],
+    left_ankle: [cx + half * 0.8, cy + scale],
+    right_ankle: [cx - half * 0.8, cy + scale],
+  }
+  const keypoints = MOVENET_KEYPOINT_NAMES.map((name) => {
+    const [x, y] = positions[name]
+    return { x, y, score: 0.95, name }
+  })
+  return { score: 0.95, keypoints }
+}
+
+ok('a fabricated clean T-pose, driven through the REAL keypoint path (armPose/armConfidence), passes at every strictness preset', () => {
+  const pose = fakeTPoseKeypoints(500, 400)
+  const arms = armPose(pose)
+  if (!arms) throw new Error('a clean, fully-confident fabricated pose must yield an ArmPose')
+  const confidence = armConfidence(pose)
+  for (const preset of POSE_STRICTNESSES) {
+    const band = POSE_STRICTNESS_BAND[preset]
+    const sim = poseSimilarity(arms, confidence, 't_pose', band.toleranceDeg)
+    assert.ok(
+      sim >= band.passThreshold,
+      `${preset}: a clean T-pose through the real keypoint path scored ${sim.toFixed(3)}, needed >=${band.passThreshold}`,
+    )
+  }
+})
+
+ok('every pose in the library passes a confident exact copy at Easy/Normal/Strict — a relation constraint (wristsTogether/wristCrossesMidline) stuck permanently false would show up here as a flat 0', () => {
+  const confident = { left: 1, right: 1 }
+  for (const id of POSE_IDS) {
+    const target = poseTargetFor(id)
+    const exact: ArmPose = { left: { ...target.arms[0] }, right: { ...target.arms[1] } }
+    for (const preset of ['easy', 'normal', 'strict'] as const) {
+      const band = POSE_STRICTNESS_BAND[preset]
+      const sim = poseSimilarity(exact, confident, id, band.toleranceDeg)
+      assert.ok(
+        sim >= band.passThreshold,
+        `${id} at ${preset}: exact copy scored ${sim.toFixed(3)}, needed >=${band.passThreshold}`,
+      )
+    }
+  }
+})
+
+ok('a roughly-correct (25° off, not pixel-perfect) attempt comfortably passes at Easy — proves Easy is actually easy, not strict under a different name', () => {
+  const easy = POSE_STRICTNESS_BAND.easy
+  const confident = { left: 1, right: 1 }
+  const sloppy: ArmPose = {
+    left: { upper: absoluteRad(90 - 25, 1), fore: absoluteRad(90 - 25, 1) },
+    right: { upper: absoluteRad(90 + 25, -1), fore: absoluteRad(90 + 25, -1) },
+  }
+  const sim = poseSimilarity(sloppy, confident, 't_pose', easy.toleranceDeg)
+  assert.ok(
+    sim >= easy.passThreshold,
+    `a 25°-off T-pose attempt at Easy scored ${sim.toFixed(3)}, needed >=${easy.passThreshold}`,
+  )
+})
+
+ok('angle wraparound uses the shortest circular distance — 350° and 10° differ by 20°, not 340°', () => {
+  const confident = { left: 1, right: 1 }
+  // arms_down's target is 0 degrees on every constrained angle.
+  const plus10: ArmPose = {
+    left: { upper: absoluteRad(10, 1), fore: absoluteRad(10, 1) },
+    right: { upper: absoluteRad(10, -1), fore: absoluteRad(10, -1) },
+  }
+  const minus10: ArmPose = {
+    // -10 degrees is the same physical angle as +350 degrees.
+    left: { upper: absoluteRad(-10, 1), fore: absoluteRad(-10, 1) },
+    right: { upper: absoluteRad(-10, -1), fore: absoluteRad(-10, -1) },
+  }
+  const simPlus = poseSimilarity(plus10, confident, 'arms_down', 15)
+  const simMinus = poseSimilarity(minus10, confident, 'arms_down', 15)
+  assert.ok(
+    Math.abs(simPlus - simMinus) < 1e-9,
+    `+10° and -10° (=350°) must score identically off a 0° target — got ${simPlus} vs ${simMinus}`,
+  )
+  assert.ok(simPlus > 0.3, 'a 10° miss on a 15° tolerance should score meaningfully (a true 350° reading would score 0)')
 })
 
 console.log(`\n${passed} checks passed`)

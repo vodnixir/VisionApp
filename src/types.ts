@@ -103,6 +103,47 @@ export const PAUSE_SPEED_FACTOR: Record<PauseSpeed, number> = {
   slow: 1.6,
 }
 
+/* ---------------- Pose difficulty (Infinite Pose + Copy the Pose) ---------------- */
+
+/**
+ * How close a copied pose must be to count — a pre-match accessibility dial
+ * for the pose modes specifically, replacing the generic sensitivity dial
+ * there (which only ever scaled fill rate, not what "close enough" means).
+ * toleranceDeg = allowed angle error per limb; passThreshold = minimum match
+ * score (0..1) to credit the attempt at all; holdMs = how long a match must
+ * be held continuously before it counts as landed (Infinite Pose only —
+ * Copy the Pose's duel scores fill continuously and has no hold step).
+ */
+export type PoseStrictness = 'easy' | 'normal' | 'strict' | 'exact'
+
+export const POSE_STRICTNESSES: PoseStrictness[] = ['easy', 'normal', 'strict', 'exact']
+
+export interface PoseDifficultyBand {
+  toleranceDeg: number
+  passThreshold: number
+  holdMs: number
+}
+
+/** The Exact row is the hard ceiling: Infinite Pose's escalation may tighten toward it but never past it, regardless of level (see poseBandFor in InfinitePoseScreen.tsx). */
+export const POSE_STRICTNESS_BAND: Record<PoseStrictness, PoseDifficultyBand> = {
+  easy: { toleranceDeg: 60, passThreshold: 0.35, holdMs: 300 },
+  normal: { toleranceDeg: 45, passThreshold: 0.45, holdMs: 500 },
+  strict: { toleranceDeg: 32, passThreshold: 0.6, holdMs: 800 },
+  exact: { toleranceDeg: 20, passThreshold: 0.75, holdMs: 1000 },
+}
+
+/** How long the target pose stays on screen before a miss — a pacing dial for the pose modes. */
+export type PoseSpeed = 'slow' | 'normal' | 'fast'
+
+export const POSE_SPEEDS: PoseSpeed[] = ['slow', 'normal', 'fast']
+
+/** Seconds allowed per pose. */
+export const POSE_SPEED_SECONDS: Record<PoseSpeed, number> = {
+  slow: 9,
+  normal: 6,
+  fast: 4,
+}
+
 /* ---------------- Overtime (near-tie at the buzzer) ---------------- */
 
 /** Bars closer than this (percent) when time runs out → overtime. */
@@ -151,6 +192,10 @@ export interface GameSettings {
   sensitivity: Sensitivity
   /** Traffic-light mode's light-cycle speed (Fast/Normal/Slow). Unused outside 'traffic'. */
   pauseSpeed: PauseSpeed
+  /** Pose modes' matching difficulty (Easy/Normal/Strict/Exact). Unused outside 'pose' and Infinite Pose. */
+  poseStrictness: PoseStrictness
+  /** Pose modes' per-pose timer (Slow/Normal/Fast). Unused outside 'pose' and Infinite Pose. */
+  poseSpeed: PoseSpeed
   /** Flip the canvas horizontally (natural for players watching themselves on a TV). */
   mirrorMode: boolean
   /** Chosen camera deviceId; null = default front camera. */
@@ -173,6 +218,10 @@ export const DEFAULT_SETTINGS: GameSettings = {
   comboMode: true,
   sensitivity: 'medium',
   pauseSpeed: 'normal',
+  // The user has never passed 2 poses on the old fixed difficulty — default
+  // to comfortably winnable, not a challenge.
+  poseStrictness: 'easy',
+  poseSpeed: 'slow',
   mirrorMode: true,
   cameraId: null,
   maskMode: false,

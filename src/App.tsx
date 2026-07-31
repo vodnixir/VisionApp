@@ -33,8 +33,8 @@ import {
   saveTournament,
 } from './storage'
 import {
+  POSE_PERIOD_MS,
   RHYTHM_PERIOD_MS,
-  SENSITIVITY_POSE_DIFFICULTY,
   TRAFFIC_RED_MIN_MS,
   TRAFFIC_RED_VAR_MS,
   bossCharge,
@@ -52,6 +52,8 @@ import {
   OVERTIME_DELTA,
   OVERTIME_MAX_MS,
   PAUSE_SPEED_FACTOR,
+  POSE_SPEED_SECONDS,
+  POSE_STRICTNESS_BAND,
   ROUND_DURATION_MS,
   SENSITIVITY_FACTOR,
   comboMultiplier,
@@ -163,6 +165,7 @@ function createAccumulators(
   handicap: [number, number] = [0, 0],
   mode: MatchMode = 'classic',
   trafficFactor = 1,
+  poseWindowMs: number = POSE_PERIOD_MS,
 ): Accumulators {
   return {
     // The boss bar is shared — individual head starts don't apply.
@@ -178,7 +181,7 @@ function createAccumulators(
     comboDipMs: [0, 0],
     comboMult: [1, 1],
     maxCombo: [1, 1],
-    modeState: createModeState(mode, Math.random, trafficFactor),
+    modeState: createModeState(mode, Math.random, trafficFactor, poseWindowMs),
     overtime: false,
     otBase: [0, 0],
     otStartedAt: 0,
@@ -368,8 +371,10 @@ export default function App() {
       const remaining = durationMs - elapsed
       // Endless modes never run out of clock — only a filled bar ends the round.
       const timeUp = endless ? false : remaining <= 0
-      // Sensitivity scales the percent gained per movement (pre-match dial).
-      const sens = SENSITIVITY_FACTOR[g.settings.sensitivity]
+      // Sensitivity scales the percent gained per movement (pre-match dial) —
+      // pose mode has its own dedicated Strictness dial instead (below), so
+      // the generic sensitivity multiplier is neutral there, not stacked on top.
+      const sens = mode === 'pose' ? 1 : SENSITIVITY_FACTOR[g.settings.sensitivity]
       const speeds: [number, number] = [frame.players[0].speed, frame.players[1].speed]
 
       // "Freeze!" window (classic-mode modifier): moving now DRAINS your bar.
@@ -381,7 +386,7 @@ export default function App() {
       }
 
       // Mode layer: how much fill/burn this frame + what just happened.
-      const poseDifficulty = mode === 'pose' ? SENSITIVITY_POSE_DIFFICULTY[g.settings.sensitivity] : undefined
+      const poseDifficulty = mode === 'pose' ? POSE_STRICTNESS_BAND[g.settings.poseStrictness] : undefined
       const tick = modeTick(a.modeState, {
         dt: frame.dt,
         elapsedMs: elapsed,
@@ -393,6 +398,7 @@ export default function App() {
             ? [frame.players[0].armsConfidence, frame.players[1].armsConfidence]
             : undefined,
         poseDifficulty,
+        poseWindowMs: mode === 'pose' ? POSE_SPEED_SECONDS[g.settings.poseSpeed] * 1000 : undefined,
       })
       if (tick.events.beat) sfx.tick()
       if (tick.events.poseChange) sfx.release()
@@ -593,6 +599,7 @@ export default function App() {
       settings.handicap,
       settings.matchMode,
       PAUSE_SPEED_FACTOR[settings.pauseSpeed],
+      POSE_SPEED_SECONDS[settings.poseSpeed] * 1000,
     )
     // The freeze modifier belongs to classic; other modes bring their own rules.
     if (settings.freezeMode && settings.matchMode === 'classic') {

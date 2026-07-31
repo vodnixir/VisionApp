@@ -4,7 +4,7 @@
  * fill and burn does each player get this frame, and what just happened".
  * Everything is deterministic given the injected rng — covered by sanity tests.
  */
-import type { MatchMode, Sensitivity } from './types'
+import { POSE_STRICTNESS_BAND, type MatchMode } from './types'
 import type { ArmPose, Limb } from './cv/tracking'
 
 /* ---------------- Rhythm ---------------- */
@@ -147,7 +147,7 @@ export const POSE_IDS: PoseId[] = [
 /** Extra landmark relationships, evaluated via forward kinematics off the arm angles alone (see wristPosition) — no raw keypoint positions needed. */
 export type Relation =
   | { kind: 'wristsTogether'; maxDistance: number } // units: shoulder widths
-  | { kind: 'wristCrossesMidline' } // both wrists cross to the opposite half
+  | { kind: 'wristCrossesMidline'; margin?: number } // a wrist within `margin` of the midline counts as crossed — a real crossed-arms pose rarely reaches all the way to the opposite shoulder. Defaults to 0 (must actually cross).
 
 export interface PoseDefinition {
   id: PoseId
@@ -177,7 +177,11 @@ export const POSE_DEFINITIONS: Record<PoseId, PoseDefinition> = {
     nameKey: 'pose.reach_up',
     left: spec(170, 170),
     right: spec(170, 170),
-    relations: [{ kind: 'wristsTogether', maxDistance: 1.2 }],
+    // maxDistance measured empirically off this exact spec's own forward-kinematics
+    // (see wristPosition): a dead-on copy lands wrists ~1.6 shoulder-widths apart, so
+    // anything tighter than that made this pose mathematically impossible to land —
+    // not just strict. 2.0 gives a real player's imperfect hold some room.
+    relations: [{ kind: 'wristsTogether', maxDistance: 2.0 }],
   },
   y_pose: { id: 'y_pose', tier: 1, nameKey: 'pose.y_pose', left: spec(135, 135), right: spec(135, 135) },
   goalpost: { id: 'goalpost', tier: 1, nameKey: 'pose.goalpost', left: spec(90, 175), right: spec(90, 175) },
@@ -194,7 +198,13 @@ export const POSE_DEFINITIONS: Record<PoseId, PoseDefinition> = {
     nameKey: 'pose.hands_on_head',
     left: spec(75, 150),
     right: spec(75, 150),
-    relations: [{ kind: 'wristsTogether', maxDistance: 0.7 }],
+    // Same fix as reach_up: this spec's own exact-copy wrist distance is ~3.6
+    // shoulder-widths under the forward-kinematics approximation (arms don't
+    // model a true elbow bend), so 0.7 rejected a perfect copy every time.
+    // 4.2 admits the exact copy with room to spare while still excluding a
+    // fully spread pose like t_pose (4.5) — angle matching (constraintScore)
+    // is what actually discriminates the pose, this is a coarse backstop.
+    relations: [{ kind: 'wristsTogether', maxDistance: 4.2 }],
   },
   arms_crossed: {
     id: 'arms_crossed',
@@ -202,7 +212,11 @@ export const POSE_DEFINITIONS: Record<PoseId, PoseDefinition> = {
     nameKey: 'pose.arms_crossed',
     left: spec(30, -110),
     right: spec(30, -110),
-    relations: [{ kind: 'wristCrossesMidline' }],
+    // This spec's own exact-copy wrist lands ~0.15 short of the literal
+    // midline (the forward-kinematics approximation doesn't model a true
+    // elbow bend), so requiring a full crossing (margin 0) rejected a
+    // perfect copy every time. 0.3 admits it with room to spare.
+    relations: [{ kind: 'wristCrossesMidline', margin: 0.3 }],
   },
   one_arm_up: { id: 'one_arm_up', tier: 2, nameKey: 'pose.one_arm_up', left: spec(170, 170), right: spec(0, 0) },
   one_arm_out: { id: 'one_arm_out', tier: 2, nameKey: 'pose.one_arm_out', left: spec(90, 90), right: spec(0, 0) },
@@ -273,7 +287,8 @@ function relationsHold(left: ArmSpec, right: ArmSpec, relations: Relation[] | un
     if (rel.kind === 'wristsTogether') {
       if (Math.hypot(lw.x - rw.x, lw.y - rw.y) > rel.maxDistance) return false
     } else if (rel.kind === 'wristCrossesMidline') {
-      if (!(lw.x < 0 && rw.x > 0)) return false
+      const margin = rel.margin ?? 0
+      if (!(lw.x < margin && rw.x > -margin)) return false
     }
   }
   return true
@@ -433,12 +448,6 @@ export function nextPoseIndex(prev: number, rng: () => number): number {
   return i
 }
 
-/** The 2P duel's fixed pose difficulty, driven by the existing low/medium/high sensitivity dial (MatchSetupScreen). Infinite Pose uses its own escalating table instead — see InfinitePoseScreen.tsx. */
-export const SENSITIVITY_POSE_DIFFICULTY: Record<Sensitivity, { toleranceDeg: number; passThreshold: number }> = {
-  low: { toleranceDeg: 40, passThreshold: 0.5 },
-  medium: { toleranceDeg: 32, passThreshold: 0.58 },
-  high: { toleranceDeg: 24, passThreshold: 0.68 },
-}
 
 /* ---------------- Boss (co-op) ---------------- */
 
@@ -474,11 +483,16 @@ export interface ModeState {
  *   host's Fast/Normal/Slow pause-speed setting (PAUSE_SPEED_FACTOR in
  *   types.ts). Defaults to 1 (unscaled) so every existing caller/test that
  *   doesn't pass it keeps behaving exactly as before.
+ * @param poseWindowMs How long the first target pose stays up before a miss —
+ *   the host's Slow/Normal/Fast Speed setting (POSE_SPEED_SECONDS in
+ *   types.ts), in ms. Defaults to POSE_PERIOD_MS so every existing
+ *   caller/test that doesn't pass it keeps behaving exactly as before.
  */
 export function createModeState(
   mode: MatchMode,
   rng: () => number = Math.random,
   trafficFactor = 1,
+  poseWindowMs: number = POSE_PERIOD_MS,
 ): ModeState {
   return {
     mode,
@@ -492,7 +506,7 @@ export function createModeState(
     attackAtMs: BOSS_ATTACK_EVERY_MS,
     attackNumber: 0,
     poseIndex: Math.min(POSE_LIBRARY.length - 1, Math.floor(rng() * POSE_LIBRARY.length)),
-    poseSwitchAtMs: POSE_PERIOD_MS,
+    poseSwitchAtMs: poseWindowMs,
   }
 }
 
@@ -507,8 +521,10 @@ export interface ModeTickInput {
   poses?: [ArmPose | null, ArmPose | null]
   /** pose mode: each player's raw confidence backing `poses`, parallel array. */
   poseConfidence?: [{ left: number; right: number } | null, { left: number; right: number } | null]
-  /** pose mode: this round's tolerance/threshold (from the sensitivity setting). Defaults to medium if omitted. */
+  /** pose mode: this round's tolerance/threshold (from the Strictness setting). Defaults to POSE_STRICTNESS_BAND.normal if omitted. */
   poseDifficulty?: { toleranceDeg: number; passThreshold: number }
+  /** pose mode: how long each target pose stays up before it's a miss (from the Speed setting). Defaults to POSE_PERIOD_MS if omitted. */
+  poseWindowMs?: number
 }
 
 export interface ModeEvents {
@@ -612,14 +628,15 @@ export function modeTick(
     }
 
     case 'pose': {
-      // Rotate the target pose on a fixed cadence; everyone copies the SAME one.
+      // Rotate the target pose on the chosen Speed cadence; everyone copies the SAME one.
+      const windowMs = input.poseWindowMs ?? POSE_PERIOD_MS
       if (elapsedMs >= state.poseSwitchAtMs) {
         state.poseIndex = nextPoseIndex(state.poseIndex, rng)
-        state.poseSwitchAtMs = elapsedMs + POSE_PERIOD_MS
+        state.poseSwitchAtMs = elapsedMs + windowMs
         events.poseChange = true
       }
       const target = POSE_LIBRARY[state.poseIndex]
-      const { toleranceDeg, passThreshold } = input.poseDifficulty ?? SENSITIVITY_POSE_DIFFICULTY.medium
+      const { toleranceDeg, passThreshold } = input.poseDifficulty ?? POSE_STRICTNESS_BAND.normal
       const match: [number, number] = [0, 0]
       for (const i of [0, 1] as const) {
         const sim = poseSimilarity(
