@@ -9,11 +9,14 @@ import { prefetchEngine, usePoseDetection } from '../hooks/usePoseDetection'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { useI18n } from '../i18n'
 import {
+  advanceHold,
+  EMPTY_HOLD_STATE,
   nextInfinitePoseId,
   poseArmScores,
   poseConfidenceOk,
   poseSimilarity,
   poseTargetFor,
+  type HoldState,
   type PoseId,
 } from '../modes'
 import { loadSettingsPatch, saveSettings } from '../storage'
@@ -83,6 +86,7 @@ function poseBandFor(attemptNumber: number, base: PoseDifficultyBand): PoseDiffi
     toleranceDeg: lerp(base.toleranceDeg, exact.toleranceDeg, t),
     passThreshold: lerp(base.passThreshold, exact.passThreshold, t),
     holdMs: lerp(base.holdMs, exact.holdMs, t),
+    graceMs: lerp(base.graceMs, exact.graceMs, t),
   }
 }
 
@@ -187,7 +191,7 @@ export function InfinitePoseScreen() {
   const calibrationStartRef = useRef<number | null>(null)
   const currentPoseIdRef = useRef<PoseId | null>(null)
   const bandRef = useRef<PoseDifficultyBand>(poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness]))
-  const holdStartRef = useRef<number | null>(null)
+  const holdStateRef = useRef<HoldState>(EMPTY_HOLD_STATE)
   const windowStartRef = useRef(0)
   const attemptRef = useRef(1)
   const livesRef = useRef(START_LIVES)
@@ -271,7 +275,7 @@ export function InfinitePoseScreen() {
   const advancePose = (now: number) => {
     currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptRef.current, Math.random)
     bandRef.current = poseBandFor(attemptRef.current, POSE_STRICTNESS_BAND[poseStrictness])
-    holdStartRef.current = null
+    holdStateRef.current = EMPTY_HOLD_STATE
     windowStartRef.current = now
     drawOverlay(currentPoseIdRef.current)
   }
@@ -363,22 +367,20 @@ export function InfinitePoseScreen() {
           },
         })
 
-        if (match >= band.passThreshold) {
-          if (holdStartRef.current === null) holdStartRef.current = frame.now
-          const held = frame.now - (holdStartRef.current ?? frame.now)
-          setHoldProgress(Math.min(1, held / band.holdMs))
-          if (held >= band.holdMs) {
-            // Landed it — next attempt is faster and stricter.
-            sfx.tick()
-            attemptRef.current += 1
-            setLevel(attemptRef.current)
-            advancePose(frame.now)
-            setHoldProgress(0)
-            return
-          }
-        } else {
-          holdStartRef.current = null
+        // A single bad tracking frame (an arm briefly occluding the torso, a
+        // lighting flicker) does not erase hold progress — only a drop that
+        // outlasts the chosen preset's grace window does. See advanceHold.
+        const holdResult = advanceHold(holdStateRef.current, frame.now, match, band)
+        holdStateRef.current = holdResult.state
+        setHoldProgress(holdResult.progress)
+        if (holdResult.landed) {
+          // Landed it — next attempt is faster and stricter.
+          sfx.tick()
+          attemptRef.current += 1
+          setLevel(attemptRef.current)
+          advancePose(frame.now)
           setHoldProgress(0)
+          return
         }
 
         const window = poseWindowMs(attemptRef.current, POSE_SPEED_SECONDS[poseSpeed] * 1000)
@@ -411,7 +413,7 @@ export function InfinitePoseScreen() {
     // system is actually responding to them before anything harder shows up.
     currentPoseIdRef.current = 't_pose'
     bandRef.current = poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness])
-    holdStartRef.current = null
+    holdStateRef.current = EMPTY_HOLD_STATE
     windowStartRef.current = performance.now()
     setIsNewBest(false)
     setHoldProgress(0)

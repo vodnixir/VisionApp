@@ -9,6 +9,7 @@ import {
   BOSS_ATTACK_DAMAGE_START,
   BOSS_ATTACK_EVERY_MS,
   ENDURANCE_GRACE_MS,
+  EMPTY_HOLD_STATE,
   POSE_DEFINITIONS,
   POSE_IDS,
   POSE_PERIOD_MS,
@@ -19,6 +20,7 @@ import {
   TRAFFIC_GREEN_MIN_MS,
   TRAFFIC_RED_MIN_MS,
   absoluteRad,
+  advanceHold,
   bossCharge,
   createModeState,
   modeTick,
@@ -28,6 +30,7 @@ import {
   poseSimilarity,
   poseTargetFor,
   specDeg,
+  type HoldState,
   type PoseId,
 } from '../src/modes'
 import { armConfidence, armPose, type ArmPose, type Limb } from '../src/cv/tracking'
@@ -1497,6 +1500,70 @@ ok('angle wraparound uses the shortest circular distance — 350° and 10° diff
     `+10° and -10° (=350°) must score identically off a 0° target — got ${simPlus} vs ${simMinus}`,
   )
   assert.ok(simPlus > 0.3, 'a 10° miss on a 15° tolerance should score meaningfully (a true 350° reading would score 0)')
+})
+
+console.log('advanceHold (grace period on a hold-in-progress)')
+
+const HOLD_BAND = { passThreshold: 0.5, holdMs: 1000, graceMs: 300 }
+
+ok('a brief below-threshold dip inside the grace window does not reset progress', () => {
+  let state: HoldState = EMPTY_HOLD_STATE
+  let r = advanceHold(state, 0, 0.9, HOLD_BAND)
+  state = r.state
+  assert.ok(state.holdStartAt === 0, 'hold begins at frame 0')
+
+  r = advanceHold(state, 400, 0.9, HOLD_BAND)
+  state = r.state
+  assert.ok(Math.abs(r.progress - 0.4) < 1e-9, 'progress after 400ms of a 1000ms hold is 40%')
+
+  // One bad frame — an arm briefly occludes the torso — well inside the 300ms grace window.
+  r = advanceHold(state, 500, 0.2, HOLD_BAND)
+  state = r.state
+  assert.ok(state.holdStartAt === 0, 'the original hold start is preserved through the dip, not restarted')
+  assert.ok(r.progress > 0.3, `progress should not collapse to 0 during a grace-covered dip, got ${r.progress}`)
+
+  // Tracking recovers before the grace window runs out.
+  r = advanceHold(state, 600, 0.9, HOLD_BAND)
+  state = r.state
+  assert.equal(state.dipStartAt, null, 'the dip clears once the match recovers')
+
+  r = advanceHold(state, 1000, 0.9, HOLD_BAND)
+  assert.ok(r.landed, 'the hold still lands at 1000ms total — the 100ms dip cost nothing')
+})
+
+ok('a dip that outlasts the grace window resets progress to zero — it is a real drop, not a blip', () => {
+  let state: HoldState = EMPTY_HOLD_STATE
+  state = advanceHold(state, 0, 0.9, HOLD_BAND).state
+  state = advanceHold(state, 400, 0.9, HOLD_BAND).state
+
+  // Confidence stays low past the 300ms grace window (a real pose break, not a flicker).
+  let r = advanceHold(state, 500, 0.1, HOLD_BAND)
+  state = r.state
+  r = advanceHold(state, 800, 0.1, HOLD_BAND) // 300ms into the dip — right at the edge
+  state = r.state
+  assert.equal(r.progress, 0, 'grace window fully elapsed — progress is gone')
+  assert.equal(state.holdStartAt, null, 'the hold is cleared, not just paused')
+
+  // Regaining the pose after the reset starts a brand-new hold from zero.
+  r = advanceHold(state, 900, 0.9, HOLD_BAND)
+  assert.ok(Math.abs(r.progress - 0) < 1e-9, 'a fresh hold starts at 0%, not wherever the old one left off')
+})
+
+ok('the Exact preset (graceMs=0) gives zero forgiveness — any dip resets immediately', () => {
+  const exactBand = POSE_STRICTNESS_BAND.exact
+  assert.equal(exactBand.graceMs, 0, 'Exact must mean exactly what it says')
+  let state: HoldState = EMPTY_HOLD_STATE
+  state = advanceHold(state, 0, 0.9, exactBand).state
+  state = advanceHold(state, 500, 0.9, exactBand).state
+  assert.ok(state.holdStartAt !== null, 'holding fine so far')
+  const r = advanceHold(state, 501, 0.1, exactBand) // a single 1ms-old dip
+  assert.equal(r.progress, 0, 'Exact tolerates no dip at all, however short')
+  assert.equal(r.state.holdStartAt, null)
+})
+
+ok('a dip with nothing currently held is just a miss — no grace to give what was never held', () => {
+  const r = advanceHold(EMPTY_HOLD_STATE, 1000, 0.1, HOLD_BAND)
+  assert.deepEqual(r, { state: EMPTY_HOLD_STATE, progress: 0, landed: false })
 })
 
 console.log(`\n${passed} checks passed`)

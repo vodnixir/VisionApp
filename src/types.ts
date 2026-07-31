@@ -113,6 +113,9 @@ export const PAUSE_SPEED_FACTOR: Record<PauseSpeed, number> = {
  * score (0..1) to credit the attempt at all; holdMs = how long a match must
  * be held continuously before it counts as landed (Infinite Pose only —
  * Copy the Pose's duel scores fill continuously and has no hold step).
+ * graceMs = how long a hold-in-progress may drop below passThreshold before
+ * it's treated as a real drop rather than a tracking blip (occlusion, a
+ * frame of bad lighting) — Infinite Pose only, see advanceHold in modes.ts.
  */
 export type PoseStrictness = 'easy' | 'normal' | 'strict' | 'exact'
 
@@ -122,14 +125,15 @@ export interface PoseDifficultyBand {
   toleranceDeg: number
   passThreshold: number
   holdMs: number
+  graceMs: number
 }
 
-/** The Exact row is the hard ceiling: Infinite Pose's escalation may tighten toward it but never past it, regardless of level (see poseBandFor in InfinitePoseScreen.tsx). */
+/** The Exact row is the hard ceiling: Infinite Pose's escalation may tighten toward it but never past it, regardless of level (see poseBandFor in InfinitePoseScreen.tsx). Exact's graceMs is 0 by design — it means exactly what it says, no forgiveness. */
 export const POSE_STRICTNESS_BAND: Record<PoseStrictness, PoseDifficultyBand> = {
-  easy: { toleranceDeg: 60, passThreshold: 0.35, holdMs: 300 },
-  normal: { toleranceDeg: 45, passThreshold: 0.45, holdMs: 500 },
-  strict: { toleranceDeg: 32, passThreshold: 0.6, holdMs: 800 },
-  exact: { toleranceDeg: 20, passThreshold: 0.75, holdMs: 1000 },
+  easy: { toleranceDeg: 60, passThreshold: 0.35, holdMs: 300, graceMs: 400 },
+  normal: { toleranceDeg: 45, passThreshold: 0.45, holdMs: 500, graceMs: 250 },
+  strict: { toleranceDeg: 32, passThreshold: 0.6, holdMs: 800, graceMs: 120 },
+  exact: { toleranceDeg: 20, passThreshold: 0.75, holdMs: 1000, graceMs: 0 },
 }
 
 /** How long the target pose stays on screen before a miss — a pacing dial for the pose modes. */

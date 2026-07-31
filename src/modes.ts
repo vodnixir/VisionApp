@@ -414,6 +414,57 @@ export function poseArmScores(
   }
 }
 
+/* ---------------- Hold tracking (Infinite Pose's "land the pose" timer) ---------------- */
+
+export interface HoldState {
+  /** When the current hold run began — persists through short below-threshold dips (see advanceHold). Null when nothing is being held. */
+  holdStartAt: number | null
+  /** When the current below-threshold dip began, or null when not currently dipping. */
+  dipStartAt: number | null
+}
+
+export const EMPTY_HOLD_STATE: HoldState = { holdStartAt: null, dipStartAt: null }
+
+/**
+ * Advance the hold-to-land timer by one frame. A real camera drops keypoint
+ * confidence for a frame or two all the time — an arm briefly occluding the
+ * torso, a lighting flicker — and none of that means the player actually
+ * broke the pose. Only a dip that persists past graceMs is treated as a real
+ * drop; anything shorter is bridged over and the hold keeps counting through
+ * it, exactly as if that frame had matched. Pure and frame-driven (not a
+ * setTimeout), so it's naturally paced by the same clock as everything else
+ * and trivially testable.
+ */
+export function advanceHold(
+  state: HoldState,
+  now: number,
+  match: number,
+  band: { passThreshold: number; holdMs: number; graceMs: number },
+): { state: HoldState; progress: number; landed: boolean } {
+  if (match >= band.passThreshold) {
+    const holdStartAt = state.holdStartAt ?? now
+    const held = now - holdStartAt
+    if (held >= band.holdMs) {
+      return { state: EMPTY_HOLD_STATE, progress: 1, landed: true }
+    }
+    return { state: { holdStartAt, dipStartAt: null }, progress: held / band.holdMs, landed: false }
+  }
+  if (state.holdStartAt === null) {
+    // Nothing being held — a miss here is just a miss, no grace to give.
+    return { state: EMPTY_HOLD_STATE, progress: 0, landed: false }
+  }
+  const dipStartAt = state.dipStartAt ?? now
+  if (now - dipStartAt >= band.graceMs) {
+    // The dip outlasted the grace window — a real drop, not a blip.
+    return { state: EMPTY_HOLD_STATE, progress: 0, landed: false }
+  }
+  // Still within grace: keep the original holdStartAt so this dip's time
+  // counts toward the hold rather than pausing it, and report progress as of
+  // the last good frame so the bar doesn't visibly flicker during the dip.
+  const held = now - state.holdStartAt
+  return { state: { holdStartAt: state.holdStartAt, dipStartAt }, progress: Math.min(1, held / band.holdMs), landed: false }
+}
+
 /** Largest single spec-angle gap between two poses (all 4 constraints) — keeps Infinite Pose from serving two poses that look nearly identical back to back. */
 function poseAngleSpread(a: PoseId, b: PoseId): number {
   const da = POSE_DEFINITIONS[a]
