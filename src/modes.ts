@@ -118,14 +118,12 @@ export type PoseId =
   | 'reach_up'
   | 'y_pose'
   | 'goalpost'
-  | 'hands_on_hips'
-  | 'hands_on_head'
-  | 'arms_crossed'
+  | 'arms_forward_down'
   | 'one_arm_up'
   | 'one_arm_out'
-  | 'teapot'
   | 'diagonal'
-  | 'salute'
+  | 'one_up_one_out'
+  | 'one_arm_out_other_diagonal'
 
 /** Ordered Tier 1 (symmetric) then Tier 2 (asymmetric) — the only place pose order is defined; everything else derives from POSE_DEFINITIONS via this. */
 export const POSE_IDS: PoseId[] = [
@@ -134,14 +132,12 @@ export const POSE_IDS: PoseId[] = [
   'reach_up',
   'y_pose',
   'goalpost',
-  'hands_on_hips',
-  'hands_on_head',
-  'arms_crossed',
+  'arms_forward_down',
   'one_arm_up',
   'one_arm_out',
-  'teapot',
   'diagonal',
-  'salute',
+  'one_up_one_out',
+  'one_arm_out_other_diagonal',
 ]
 
 /** Extra landmark relationships, evaluated via forward kinematics off the arm angles alone (see wristPosition) — no raw keypoint positions needed. */
@@ -183,46 +179,32 @@ export const POSE_DEFINITIONS: Record<PoseId, PoseDefinition> = {
     // not just strict. 2.0 gives a real player's imperfect hold some room.
     relations: [{ kind: 'wristsTogether', maxDistance: 2.0 }],
   },
-  y_pose: { id: 'y_pose', tier: 1, nameKey: 'pose.y_pose', left: spec(135, 135), right: spec(135, 135) },
-  goalpost: { id: 'goalpost', tier: 1, nameKey: 'pose.goalpost', left: spec(90, 175), right: spec(90, 175) },
-  hands_on_hips: {
-    id: 'hands_on_hips',
+  y_pose: { id: 'y_pose', tier: 1, nameKey: 'pose.y_pose', left: spec(125, 125), right: spec(125, 125) },
+  goalpost: { id: 'goalpost', tier: 1, nameKey: 'pose.goalpost', left: spec(90, 170), right: spec(90, 170) },
+  arms_forward_down: {
+    id: 'arms_forward_down',
     tier: 1,
-    nameKey: 'pose.hands_on_hips',
-    left: spec(35, -40),
-    right: spec(35, -40),
-  },
-  hands_on_head: {
-    id: 'hands_on_head',
-    tier: 1,
-    nameKey: 'pose.hands_on_head',
-    left: spec(75, 150),
-    right: spec(75, 150),
-    // Same fix as reach_up: this spec's own exact-copy wrist distance is ~3.6
-    // shoulder-widths under the forward-kinematics approximation (arms don't
-    // model a true elbow bend), so 0.7 rejected a perfect copy every time.
-    // 4.2 admits the exact copy with room to spare while still excluding a
-    // fully spread pose like t_pose (4.5) — angle matching (constraintScore)
-    // is what actually discriminates the pose, this is a coarse backstop.
-    relations: [{ kind: 'wristsTogether', maxDistance: 4.2 }],
-  },
-  arms_crossed: {
-    id: 'arms_crossed',
-    tier: 1,
-    nameKey: 'pose.arms_crossed',
-    left: spec(30, -110),
-    right: spec(30, -110),
-    // This spec's own exact-copy wrist lands ~0.15 short of the literal
-    // midline (the forward-kinematics approximation doesn't model a true
-    // elbow bend), so requiring a full crossing (margin 0) rejected a
-    // perfect copy every time. 0.3 admits it with room to spare.
-    relations: [{ kind: 'wristCrossesMidline', margin: 0.3 }],
+    nameKey: 'pose.arms_forward_down',
+    left: spec(45, 45),
+    right: spec(45, 45),
   },
   one_arm_up: { id: 'one_arm_up', tier: 2, nameKey: 'pose.one_arm_up', left: spec(170, 170), right: spec(0, 0) },
   one_arm_out: { id: 'one_arm_out', tier: 2, nameKey: 'pose.one_arm_out', left: spec(90, 90), right: spec(0, 0) },
-  teapot: { id: 'teapot', tier: 2, nameKey: 'pose.teapot', left: spec(160, 140), right: spec(35, -40) },
   diagonal: { id: 'diagonal', tier: 2, nameKey: 'pose.diagonal', left: spec(130, 130), right: spec(45, 45) },
-  salute: { id: 'salute', tier: 2, nameKey: 'pose.salute', left: spec(70, 140), right: spec(0, 0) },
+  one_up_one_out: {
+    id: 'one_up_one_out',
+    tier: 2,
+    nameKey: 'pose.one_up_one_out',
+    left: spec(170, 170),
+    right: spec(90, 90),
+  },
+  one_arm_out_other_diagonal: {
+    id: 'one_arm_out_other_diagonal',
+    tier: 2,
+    nameKey: 'pose.one_arm_out_other_diagonal',
+    left: spec(90, 90),
+    right: spec(135, 135),
+  },
 }
 
 /** PoseTarget[] (Limb pairs) for drawPoseTarget/the HUD — unchanged consumer contract, now built from POSE_DEFINITIONS via the authoring conversion. */
@@ -267,15 +249,20 @@ interface Vec2 {
   y: number
 }
 
-function wristPosition(a: ArmSpec, side: SideSign): Vec2 {
+function wristPosition(
+  a: ArmSpec,
+  side: SideSign,
+  upperLen: number = UPPER_ARM_LEN,
+  foreLen: number = FOREARM_LEN,
+): Vec2 {
   const shoulder: Vec2 = { x: side * 0.5, y: 0 }
   const upperRad = absoluteRad(a.upper, side)
   const elbow: Vec2 = {
-    x: shoulder.x + UPPER_ARM_LEN * Math.cos(upperRad),
-    y: shoulder.y + UPPER_ARM_LEN * Math.sin(upperRad),
+    x: shoulder.x + upperLen * Math.cos(upperRad),
+    y: shoulder.y + upperLen * Math.sin(upperRad),
   }
   const foreRad = absoluteRad(a.fore, side)
-  return { x: elbow.x + FOREARM_LEN * Math.cos(foreRad), y: elbow.y + FOREARM_LEN * Math.sin(foreRad) }
+  return { x: elbow.x + foreLen * Math.cos(foreRad), y: elbow.y + foreLen * Math.sin(foreRad) }
 }
 
 /** Relations are hard gates: any failure fails the whole pairing, regardless of angle score. */
@@ -292,6 +279,113 @@ function relationsHold(left: ArmSpec, right: ArmSpec, relations: Relation[] | un
     }
   }
   return true
+}
+
+/* ---------------- Pose visibility validator ---------------- */
+
+/**
+ * A resting arm (hanging straight at the side, the exact arms_down spec)
+ * is naturally always visible and never occluded — but it fails the
+ * geometric checks below by its very shape (a straight-down arm doesn't
+ * reach 0.75 shoulder-widths from the midline, and its elbow is well under
+ * 25° from vertical). Those checks are calibrated for an ACTIVE, raised
+ * limb; a resting arm inside an otherwise-asymmetric pose (one_arm_up's
+ * dropped side, say) is exempt from them for the same reason the whole
+ * arms_down pose is exempt below.
+ */
+function isRestingArm(a: ArmSpec): boolean {
+  return a.upper === 0 && a.fore === 0
+}
+
+/**
+ * Wrist position from IDEALIZED unit-length forward kinematics (shoulder →
+ * elbow → wrist, each segment exactly 1 shoulder-width) — deliberately
+ * simpler than wristPosition's default gameplay proportions (which are
+ * tuned against specific relation maxDistance values already set for
+ * reach_up). This is only for judging whether a pose's authored angles put
+ * a wrist somewhere the camera can actually see it.
+ */
+function unitWristPosition(a: ArmSpec, side: SideSign): Vec2 {
+  return wristPosition(a, side, 1, 1)
+}
+
+/** Approximate head center, same shoulder-width unit system as unitWristPosition (shoulders at y=0, x=±0.5) — roughly where a head sits above the shoulder line. */
+const HEAD_POS: Vec2 = { x: 0, y: -0.65 }
+
+/** Wrist must clear the torso by at least this many shoulder-widths from the midline. */
+const MIN_TORSO_CLEARANCE = 0.75
+/** Wrists must stay at least this far apart, unless the pose declares wristsTogether. */
+const MIN_WRIST_SEPARATION = 1.0
+/** Wrist must stay at least this far from the head. */
+const MIN_HEAD_CLEARANCE = 0.6
+/** Upper arm must be at least this many degrees off straight-down, so the elbow clears the ribs. */
+const MIN_ELBOW_CLEARANCE_DEG = 25
+
+export interface VisibilityViolation {
+  rule: 1 | 2 | 3 | 4 | 5
+  message: string
+}
+
+/**
+ * Every rule a pose's AUTHORED ANGLES must satisfy for a real player's
+ * wrists to land somewhere MoveNet can actually see them — no tolerance
+ * setting can rescue a pose that fails this, because the problem is the
+ * target position, not how closely the player copies it. arms_down (the
+ * rest pose) is exempt outright: it's not an active gesture, both wrists
+ * sit in plain view beside the hips, and every run needs it as a reset.
+ */
+export function poseVisibilityViolations(def: PoseDefinition): VisibilityViolation[] {
+  if (def.id === 'arms_down') return []
+  const violations: VisibilityViolation[] = []
+  const sides: [ArmSpec, SideSign, string][] = [
+    [def.left, 1, 'left'],
+    [def.right, -1, 'right'],
+  ]
+
+  for (const [arm, side, label] of sides) {
+    if (isRestingArm(arm)) continue
+    if (arm.fore < 0) {
+      violations.push({
+        rule: 1,
+        message: `${label} forearm is ${arm.fore}° (negative points the wrist inward across the torso)`,
+      })
+    }
+    if (arm.upper < MIN_ELBOW_CLEARANCE_DEG) {
+      violations.push({
+        rule: 5,
+        message: `${label} upper arm is only ${arm.upper}° from straight down — the elbow is jammed against the torso`,
+      })
+    }
+    const wrist = unitWristPosition(arm, side)
+    if (Math.abs(wrist.x) < MIN_TORSO_CLEARANCE) {
+      violations.push({
+        rule: 2,
+        message: `${label} wrist sits ${Math.abs(wrist.x).toFixed(2)} shoulder-widths from the midline (needs >=${MIN_TORSO_CLEARANCE}) — too close to the torso`,
+      })
+    }
+    const headDist = Math.hypot(wrist.x - HEAD_POS.x, wrist.y - HEAD_POS.y)
+    if (headDist < MIN_HEAD_CLEARANCE) {
+      violations.push({
+        rule: 4,
+        message: `${label} wrist is ${headDist.toFixed(2)} shoulder-widths from the head (needs >=${MIN_HEAD_CLEARANCE}) — overlaps the face`,
+      })
+    }
+  }
+
+  const hasWristsTogether = def.relations?.some((r) => r.kind === 'wristsTogether') ?? false
+  if (!hasWristsTogether) {
+    const lw = unitWristPosition(def.left, 1)
+    const rw = unitWristPosition(def.right, -1)
+    const sep = Math.hypot(lw.x - rw.x, lw.y - rw.y)
+    if (sep < MIN_WRIST_SEPARATION) {
+      violations.push({
+        rule: 3,
+        message: `wrists are ${sep.toFixed(2)} shoulder-widths apart (needs >=${MIN_WRIST_SEPARATION}) — too close together to tell apart`,
+      })
+    }
+  }
+
+  return violations
 }
 
 /** Smallest absolute circular gap between two angles, degrees, 0..180. */
@@ -463,6 +557,31 @@ export function advanceHold(
   // the last good frame so the bar doesn't visibly flicker during the dip.
   const held = now - state.holdStartAt
   return { state: { holdStartAt: state.holdStartAt, dipStartAt }, progress: Math.min(1, held / band.holdMs), landed: false }
+}
+
+/* ---------------- Pose attempt resolution (exactly-once landed/missed) ---------------- */
+
+export interface PoseAttempt {
+  /** Unique per attempt — an old attempt's id can never match a newer one's. */
+  id: number
+  resolved: boolean
+}
+
+/** Begin a fresh, unresolved attempt with an id distinct from whatever came before. */
+export function nextPoseAttempt(prev: PoseAttempt | null): PoseAttempt {
+  return { id: (prev?.id ?? 0) + 1, resolved: false }
+}
+
+/**
+ * Resolve a pose attempt (landed or missed) exactly once. `ok: true` only on
+ * the first call for a given attempt — a second resolution of the SAME
+ * attempt (two checks in one frame, a stale check that runs after the
+ * attempt already moved on) returns `ok: false` and the caller must apply no
+ * side effect: no life lost, no level gained, a second time for one pose.
+ */
+export function resolvePoseAttempt(current: PoseAttempt): { attempt: PoseAttempt; ok: boolean } {
+  if (current.resolved) return { attempt: current, ok: false }
+  return { attempt: { ...current, resolved: true }, ok: true }
 }
 
 /** Largest single spec-angle gap between two poses (all 4 constraints) — keeps Infinite Pose from serving two poses that look nearly identical back to back. */

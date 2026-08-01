@@ -25,12 +25,17 @@ import {
   createModeState,
   modeTick,
   nextInfinitePoseId,
+  nextPoseAttempt,
   nextPoseIndex,
   poseArmScores,
   poseSimilarity,
   poseTargetFor,
+  poseVisibilityViolations,
+  resolvePoseAttempt,
   specDeg,
   type HoldState,
+  type PoseAttempt,
+  type PoseDefinition,
   type PoseId,
 } from '../src/modes'
 import { armConfidence, armPose, type ArmPose, type Limb } from '../src/cv/tracking'
@@ -702,7 +707,7 @@ ok('poseArmScores: per-arm breakdown for the live skeleton colors', () => {
   assert.deepEqual(poseArmScores(null, confident, 't_pose', 32), { left: null, right: null }, 'no tracking → both null')
 })
 
-ok('pose library: every pair is separated by >=35° on some spec angle under the matcher\'s pairing, except the one documented exception', () => {
+ok('pose library: every pair is separated by >=35° on some spec angle under the matcher\'s pairing', () => {
   const specDelta = (a: number, b: number): number => {
     const d = Math.abs(a - b) % 360
     return d > 180 ? 360 - d : d
@@ -732,14 +737,55 @@ ok('pose library: every pair is separated by >=35° on some spec angle under the
       const a = POSE_IDS[i]
       const b = POSE_IDS[j]
       const spread = pairSpread(a, b)
-      const isKnownException = (a === 'goalpost' && b === 'hands_on_head') || (a === 'hands_on_head' && b === 'goalpost')
-      if (isKnownException) {
-        assert.ok(spread < 35, 'goalpost vs hands_on_head is expected to be close on angles alone — rescued by wristsTogether')
-      } else {
-        assert.ok(spread >= 35, `${a} vs ${b} are only ${spread.toFixed(1)}° apart under any pairing — not separated`)
-      }
+      assert.ok(spread >= 35, `${a} vs ${b} are only ${spread.toFixed(1)}° apart under any pairing — not separated`)
     }
   }
+})
+
+ok('pose library: every real pose keeps both wrists somewhere MoveNet can actually see — THIS is the test that fails the build if an unreadable pose is ever added again', () => {
+  for (const id of POSE_IDS) {
+    const violations = poseVisibilityViolations(POSE_DEFINITIONS[id])
+    assert.equal(
+      violations.length,
+      0,
+      `${id} fails the visibility rules: ${violations.map((v) => `[rule ${v.rule}] ${v.message}`).join('; ')}`,
+    )
+  }
+})
+
+ok('poseVisibilityViolations actually catches an unreadable pose — proof the validator has teeth, not just a library that happens to pass', () => {
+  // id: 't_pose' below is a real id borrowed purely to satisfy the type
+  // checker — none of these fake definitions are written back to
+  // POSE_DEFINITIONS. Deliberately NOT 'arms_down': that id is the one
+  // legitimate exemption (see poseVisibilityViolations), so reusing it here
+  // would trivially exempt these bad poses too and prove nothing.
+
+  // The exact shape of the 4 poses this task removed: a negative forearm
+  // angle pulls the wrist in across the torso, out of camera view.
+  const occluded: PoseDefinition = {
+    id: 't_pose',
+    tier: 1,
+    nameKey: 'pose.t_pose',
+    left: { upper: 30, fore: -110 },
+    right: { upper: 30, fore: -110 },
+  }
+  const violations = poseVisibilityViolations(occluded)
+  assert.ok(violations.length > 0, 'a negative-forearm pose must be flagged, not silently accepted')
+  assert.ok(violations.some((v) => v.rule === 1), 'specifically as a rule-1 (negative forearm) violation')
+
+  // A pose with both wrists jammed against the hips — occluded and cramped.
+  const cramped: PoseDefinition = {
+    id: 't_pose',
+    tier: 1,
+    nameKey: 'pose.t_pose',
+    left: { upper: 35, fore: -40 },
+    right: { upper: 35, fore: -40 },
+  }
+  assert.ok(poseVisibilityViolations(cramped).length > 0, 'hands-on-hips-shaped angles must also be flagged')
+
+  // A clean, wide pose must have nothing wrong with it — the validator
+  // isn't just flagging everything.
+  assert.deepEqual(poseVisibilityViolations(POSE_DEFINITIONS.t_pose), [], 't_pose has no violations')
 })
 
 // These two tests call the exact selector functions the running game calls
@@ -1564,6 +1610,54 @@ ok('the Exact preset (graceMs=0) gives zero forgiveness — any dip resets immed
 ok('a dip with nothing currently held is just a miss — no grace to give what was never held', () => {
   const r = advanceHold(EMPTY_HOLD_STATE, 1000, 0.1, HOLD_BAND)
   assert.deepEqual(r, { state: EMPTY_HOLD_STATE, progress: 0, landed: false })
+})
+
+console.log('resolvePoseAttempt (a pose can land or miss exactly once)')
+
+ok('a second resolution of the same attempt is a no-op — this is the fix for a miss costing two lives', () => {
+  let attempt: PoseAttempt = nextPoseAttempt(null)
+  const first = resolvePoseAttempt(attempt)
+  attempt = first.attempt
+  assert.equal(first.ok, true, 'the first resolution of a fresh attempt succeeds')
+
+  // Simulate the exact failure mode this bug describes: the same attempt's
+  // miss-window check evaluating true on a second frame before anything
+  // moved the game on to a new attempt.
+  const second = resolvePoseAttempt(attempt)
+  assert.equal(second.ok, false, 'resolving the SAME attempt again must be rejected')
+  assert.equal(attempt.resolved, true, 'the attempt is unambiguously marked resolved after the first call')
+})
+
+ok('starting a new attempt never collides with the previous one', () => {
+  const a1 = nextPoseAttempt(null)
+  const a2 = nextPoseAttempt(a1)
+  const a3 = nextPoseAttempt(a2)
+  assert.ok(a1.id !== a2.id && a2.id !== a3.id && a1.id !== a3.id, 'every attempt gets a distinct id')
+  assert.equal(a2.resolved, false, 'a fresh attempt always starts unresolved')
+})
+
+ok('simulated run: three misses end it, never two — the exact scenario the bug report describes', () => {
+  // Mirrors InfinitePoseScreen's own loop shape: each "frame" either re-checks
+  // the same unresolved attempt (as a real double-fire would) or advances to
+  // a new one, and only an `ok` resolution may charge a life.
+  let attempt: PoseAttempt = nextPoseAttempt(null)
+  let lives = 3
+  const missOnce = () => {
+    // Two checks against the same attempt in a row, exactly like two frames
+    // both crossing the miss-window threshold before the pose advances.
+    for (let i = 0; i < 2; i++) {
+      const r = resolvePoseAttempt(attempt)
+      attempt = r.attempt
+      if (r.ok) lives -= 1
+    }
+    attempt = nextPoseAttempt(attempt) // the game moves on to a new pose
+  }
+  missOnce()
+  assert.equal(lives, 2, 'one miss costs exactly one life even when checked twice')
+  missOnce()
+  assert.equal(lives, 1, 'two misses cost exactly two lives')
+  missOnce()
+  assert.equal(lives, 0, 'three misses cost exactly three lives — the run ends here, not after two')
 })
 
 console.log(`\n${passed} checks passed`)

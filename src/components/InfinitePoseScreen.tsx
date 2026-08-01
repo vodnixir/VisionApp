@@ -12,11 +12,14 @@ import {
   advanceHold,
   EMPTY_HOLD_STATE,
   nextInfinitePoseId,
+  nextPoseAttempt,
   poseArmScores,
   poseConfidenceOk,
   poseSimilarity,
   poseTargetFor,
+  resolvePoseAttempt,
   type HoldState,
+  type PoseAttempt,
   type PoseId,
 } from '../modes'
 import { loadSettingsPatch, saveSettings } from '../storage'
@@ -192,6 +195,8 @@ export function InfinitePoseScreen() {
   const currentPoseIdRef = useRef<PoseId | null>(null)
   const bandRef = useRef<PoseDifficultyBand>(poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness]))
   const holdStateRef = useRef<HoldState>(EMPTY_HOLD_STATE)
+  /** Guards the landed/missed transition so it can only ever fire once per pose — see resolvePoseAttempt. */
+  const poseAttemptRef = useRef<PoseAttempt>(nextPoseAttempt(null))
   const windowStartRef = useRef(0)
   const attemptRef = useRef(1)
   const livesRef = useRef(START_LIVES)
@@ -276,6 +281,7 @@ export function InfinitePoseScreen() {
     currentPoseIdRef.current = nextInfinitePoseId(currentPoseIdRef.current, attemptRef.current, Math.random)
     bandRef.current = poseBandFor(attemptRef.current, POSE_STRICTNESS_BAND[poseStrictness])
     holdStateRef.current = EMPTY_HOLD_STATE
+    poseAttemptRef.current = nextPoseAttempt(poseAttemptRef.current)
     windowStartRef.current = now
     drawOverlay(currentPoseIdRef.current)
   }
@@ -374,26 +380,48 @@ export function InfinitePoseScreen() {
         holdStateRef.current = holdResult.state
         setHoldProgress(holdResult.progress)
         if (holdResult.landed) {
-          // Landed it — next attempt is faster and stricter.
-          sfx.tick()
-          attemptRef.current += 1
-          setLevel(attemptRef.current)
-          advancePose(frame.now)
-          setHoldProgress(0)
+          // resolvePoseAttempt guarantees this attempt's landed/missed
+          // transition fires exactly once — a second call for the same
+          // attempt (e.g. this same frame also crossing the miss window
+          // below) is a no-op, so a pose can never both land AND miss.
+          const resolved = resolvePoseAttempt(poseAttemptRef.current)
+          poseAttemptRef.current = resolved.attempt
+          if (resolved.ok) {
+            sfx.tick()
+            attemptRef.current += 1
+            setLevel(attemptRef.current)
+            advancePose(frame.now)
+            setHoldProgress(0)
+          }
           return
         }
 
         const window = poseWindowMs(attemptRef.current, POSE_SPEED_SECONDS[poseSpeed] * 1000)
         if (frame.now - windowStartRef.current >= window) {
-          // Missed this pose — costs a life, but the run continues at the
-          // same difficulty (a new pose, not a harder one) until lives run out.
-          livesRef.current -= 1
-          setLives(livesRef.current)
-          if (livesRef.current <= 0) {
-            finish()
-          } else {
-            sfx.alert()
-            advancePose(frame.now)
+          if (!poseConfidenceOk(confidence)) {
+            // The camera couldn't see the player's arms well enough to judge
+            // this attempt at all — never charge a life for something the
+            // camera missed. Re-issue the SAME pose with a fresh window
+            // instead of a silent, unexplained miss.
+            setHintIcon('🙌')
+            setHintText(t('pose.hint.showArms'))
+            windowStartRef.current = frame.now
+            holdStateRef.current = EMPTY_HOLD_STATE
+            return
+          }
+          const resolved = resolvePoseAttempt(poseAttemptRef.current)
+          poseAttemptRef.current = resolved.attempt
+          if (resolved.ok) {
+            // Missed this pose — costs a life, but the run continues at the
+            // same difficulty (a new pose, not a harder one) until lives run out.
+            livesRef.current -= 1
+            setLives(livesRef.current)
+            if (livesRef.current <= 0) {
+              finish()
+            } else {
+              sfx.alert()
+              advancePose(frame.now)
+            }
           }
         }
       }
@@ -414,6 +442,7 @@ export function InfinitePoseScreen() {
     currentPoseIdRef.current = 't_pose'
     bandRef.current = poseBandFor(1, POSE_STRICTNESS_BAND[poseStrictness])
     holdStateRef.current = EMPTY_HOLD_STATE
+    poseAttemptRef.current = nextPoseAttempt(null)
     windowStartRef.current = performance.now()
     setIsNewBest(false)
     setHoldProgress(0)
