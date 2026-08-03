@@ -51,7 +51,7 @@ export function HitboxWelcomeScreen({ onGetStarted }: Props) {
         style={{
           width: 300,
           height: 640,
-          transform: 'translate(-50%, -50%) scale(min(calc(100vw / 300), calc(100dvh / 640)))',
+          transform: 'translate(-50%, -50%) scale(min(calc(100vw / 300px), calc(100dvh / 640px)))',
         }}
       >
         <RaveBackground variant="start" />
